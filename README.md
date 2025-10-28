@@ -1,1 +1,38 @@
-# pnld_converter
+# PNLD Converter API
+API desenvolvida com FastAPI para converter arquivos PDF em pacotes no formato .pnld.
+
+## Funcionalidades
+- Upload de arquivos PDF
+-  Extração de texto via pdfminer
+-  Geração automática da estrutura de pastas PNLD
+-  Criação de um index.html com o conteúdo extraído
+-  Empacotamento final em um arquivo .pnld (ZIP)
+-  Testes
+
+## Tecnologias utilizadas
+[FastAPI](https://fastapi.tiangolo.com/)
+ — Framework principal da API
+pdfminer.six
+ — Extração de texto de PDFs
+BeautifulSoup4
+ — Geração de HTML
+pytest
+ — Testes automatizados
+Uvicorn
+ — Servidor ASGI para rodar a aplicação
+
+## Instalação e execução
+1. Clone o repositório
+   git clone https://github.com/anajugrzyb/pnld_converter.git
+   cd pnld-converter
+2. Crie e ative um ambiente virtual
+   python -m venv venv
+   source venv/bin/activate  # Linux/Mac
+   venv\Scripts\activate     # Windows
+3. Instale as dependências
+   pip install -r requirements.txt
+4. Execute a API
+   uvicorn main:app --reload
+5. Acesse no navegador
+   http://127.0.0.1:8000
+   http://127.0.0.1:8000/docs
