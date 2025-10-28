@@ -32,11 +32,12 @@ API desenvolvida com FastAPI para converter arquivos PDF em pacotes no formato .
 2. Crie e ative um ambiente virtual
    python -m venv venv
    source venv/bin/activate  # Linux/Mac
+   
    venv\Scripts\activate     # Windows
-3. Instale as dependências
+4. Instale as dependências
    pip install -r requirements.txt
-4. Execute a API
+5. Execute a API
    uvicorn main:app --reload
-5. Acesse no navegador
+6. Acesse no navegador
    http://127.0.0.1:8000
    http://127.0.0.1:8000/docs
