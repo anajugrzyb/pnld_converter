@@ -30,7 +30,7 @@ API desenvolvida com FastAPI para converter arquivos PDF em pacotes no formato .
 
    git clone https://github.com/anajugrzyb/pnld_converter.git
 
-   cd pnld-converter
+   cd pnld_converter
 3. Crie e ative um ambiente virtual
    python -m venv venv
 
