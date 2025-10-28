@@ -27,18 +27,24 @@ API desenvolvida com FastAPI para converter arquivos PDF em pacotes no formato .
 
 ## Instalação e execução
 1. Clone o repositório
+
    git clone https://github.com/anajugrzyb/pnld_converter.git
+
    cd pnld-converter
-2. Crie e ative um ambiente virtual
+3. Crie e ative um ambiente virtual
    python -m venv venv
 
    source venv/bin/activate  # Linux/Mac
    
    venv\Scripts\activate     # Windows
 4. Instale as dependências
-   pip install -r requirements.txt
-5. Execute a API
-   uvicorn main:app --reload
-6. Acesse no navegador
-   http://127.0.0.1:8000
+
+    pip install -r requirements.txt
+6. Execute a API
+
+    uvicorn main:app --reload
+8. Acesse no navegador
+
+    http://127.0.0.1:8000
+
    http://127.0.0.1:8000/docs
