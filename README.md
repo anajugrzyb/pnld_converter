@@ -31,6 +31,7 @@ API desenvolvida com FastAPI para converter arquivos PDF em pacotes no formato .
    cd pnld-converter
 2. Crie e ative um ambiente virtual
    python -m venv venv
+
    source venv/bin/activate  # Linux/Mac
    
    venv\Scripts\activate     # Windows
