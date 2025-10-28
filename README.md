@@ -12,13 +12,17 @@ API desenvolvida com FastAPI para converter arquivos PDF em pacotes no formato .
 ## Tecnologias utilizadas
 [FastAPI](https://fastapi.tiangolo.com/)
  — Framework principal da API
-pdfminer.six
+ 
+[pdfminer.six](https://github.com/pdfminer/pdfminer.six)
  — Extração de texto de PDFs
-BeautifulSoup4
+ 
+ [BeautifulSoup4](https://www.crummy.com/software/BeautifulSoup/)
  — Geração de HTML
-pytest
+ 
+ [pytest](https://docs.pytest.org/en/stable/)
  — Testes automatizados
-Uvicorn
+ 
+ [Uvicorn](https://uvicorn.dev/)
  — Servidor ASGI para rodar a aplicação
 
 ## Instalação e execução
