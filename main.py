@@ -176,6 +176,13 @@ def generate_html5(
         attrs={"class": "capa-segunda", "data-objeto": "2"},
     )
     cover_header.append(second_cover)
+
+    third_cover = soup.new_tag(
+        "section",
+        attrs={"class": "capa-terceira", "data-objeto": "2"},
+    )
+    cover_header.append(third_cover)
+
     body.append(cover_header)
 
     main = soup.new_tag("main", attrs={"class": "conteudo"})
