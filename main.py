@@ -32,6 +32,7 @@ async def convert_pdf(
     authors: Optional[str] = Form(None),
     organizer: Optional[str] = Form(None),
     editor: str = Form(...),
+    isbn: Optional[str] = Form(None),
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Please upload a valid PDF file.")
@@ -59,6 +60,7 @@ async def convert_pdf(
         authors=authors_list,
         organizer=(organizer or "").strip() or None,
         editor=editor.strip() or "Editor não informado",
+        isbn=(isbn or "").strip() or None,
     )
 
     html_title = cover_metadata.book_title or cover_metadata.collection_title
@@ -91,13 +93,12 @@ def parse_authors(authors: Optional[str]) -> list[str]:
 
 @dataclass
 class CoverMetadata:
-    """Metadata required to build the first cover of an Objeto 2 work."""
-
     collection_title: str
     book_title: Optional[str] = None
     authors: Iterable[str] = field(default_factory=list)
     organizer: Optional[str] = None
     editor: str = "Editor não informado"
+    isbn: Optional[str] = None
 
     expression: str = (
         "Obras de Apoio Pedagógico de natureza teórico-metodológica para Docentes "
@@ -107,6 +108,9 @@ class CoverMetadata:
     def authors_text(self) -> str:
         authors = list(self.authors)
         return ", ".join(authors) if authors else "Autor(es) não informados"
+
+    def isbn_text(self) -> str:
+        return self.isbn or "ISBN não informado"
 
 
 def generate_html5(
@@ -183,6 +187,19 @@ def generate_html5(
     )
     cover_header.append(third_cover)
 
+    fourth_cover = soup.new_tag(
+        "section",
+        attrs={"class": "capa-quarta", "data-objeto": "2"},
+    )
+
+    isbn_paragraph = soup.new_tag("p", attrs={"class": "identificacao-isbn"})
+    isbn_span = soup.new_tag("span", attrs={"class": "isbn"})
+    isbn_span.string = f"ISBN: {cover_metadata.isbn_text()}"
+    isbn_paragraph.append(isbn_span)
+
+    fourth_cover.append(isbn_paragraph)
+    cover_header.append(fourth_cover)
+
     body.append(cover_header)
 
     main = soup.new_tag("main", attrs={"class": "conteudo"})
@@ -212,7 +229,6 @@ def generate_files(base_path: Path, html_content: str):
     (base_path / "index.html").write_text(html_content, encoding="utf-8")
 
 def create_pnld_package(base_path: Path, output_zip: Path) -> Path:
-    """Create a PNLD package as a ZIP archive and return its location."""
 
     with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, _, files in os.walk(base_path):
