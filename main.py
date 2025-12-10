@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 TEMP_DIR = Path("temp")
 BASE_FOLDER_NAME = "pnld_project"
 OUTPUT_NAME = "converted_work.pnld"
+MAX_PACKAGE_SIZE_BYTES = int(1.5 * 1024 ** 3)
 
 app = FastAPI(
     title="PNLD Converter",
@@ -88,6 +89,12 @@ async def convert_pdf(
     create_structure(base_dir)
     generate_files(base_dir, html_content)
     create_pnld_package(base_dir, output_pnld)
+
+    if output_pnld.stat().st_size > MAX_PACKAGE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail="O pacote PNLD excede o tamanho máximo permitido de 1,5GB."
+        )
 
     return FileResponse(
         output_pnld,
