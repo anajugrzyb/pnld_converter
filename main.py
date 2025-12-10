@@ -35,9 +35,11 @@ async def convert_pdf(
         organizer: Optional[str] = Form(None),
         editor: str = Form(...),
         edition_number: Optional[str] = Form(None),
+        editor_address: Optional[str] = Form(None),
         publication_city: Optional[str] = Form(None),
         publication_year: Optional[str] = Form(None),
         isbn: Optional[str] = Form(None),
+        catalog_card: Optional[str] = Form(None),
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Please upload a valid PDF file.")
@@ -69,9 +71,11 @@ async def convert_pdf(
         organizer=(organizer or "").strip() or None,
         editor=editor.strip() or "Editor não informado",
         edition_number=(edition_number or "").strip() or None,
+        editor_address=(editor_address or "").strip() or None,
         publication_city=(publication_city or "").strip() or None,
         publication_year=(publication_year or "").strip() or None,
         isbn=(isbn or "").strip() or None,
+        catalog_card=(catalog_card or "").strip() or None,
     )
 
     html_title = cover_metadata.book_title or cover_metadata.collection_title
@@ -112,9 +116,11 @@ class CoverMetadata:
     organizer: Optional[str] = None
     editor: str = "Editor não informado"
     edition_number: Optional[str] = None
+    editor_address: Optional[str] = None
     publication_city: Optional[str] = None
     publication_year: Optional[str] = None
     isbn: Optional[str] = None
+    catalog_card: Optional[str] = None
 
     expression: str = (
         "Obras de Apoio Pedagógico de natureza teórico-metodológica para Docentes dos Anos Iniciais do Ensino Fundamental"
@@ -140,6 +146,12 @@ class CoverMetadata:
 
     def publication_year_text(self) -> str:
         return self.publication_year or "Ano de publicação não informado"
+
+    def editor_address_text(self) -> str:
+        return self.editor_address or "Endereço do editor não informado"
+
+    def catalog_card_text(self) -> str:
+        return self.catalog_card or "Ficha catalográfica não informada"
 
 
 def generate_html5(
@@ -267,7 +279,23 @@ def generate_html5(
         f"Ano: {cover_metadata.publication_year_text()}"
     )
     folha_rosto.append(edition_info)
+
+    verso_folha_rosto = soup.new_tag(
+        "section", attrs={"class": "verso=folha-rosto", "data-objeto": "2"}
+    )
+
+    catalog_card = soup.new_tag("p", attrs={"class": "ficha-catalografica"})
+    catalog_card.string = cover_metadata.catalog_card_text()
+    verso_folha_rosto.append(catalog_card)
+
+    editor_info = soup.new_tag("p", attrs={"class": "informacoes-editor"})
+    editor_info.string = (
+        f"Editor: {cover_metadata.editor} | Endereço: {cover_metadata.editor_address_text()}"
+    )
+    verso_folha_rosto.append(editor_info)
+
     body.append(folha_rosto)
+    body.append(verso_folha_rosto)
 
     main = soup.new_tag("main", attrs={"class": "conteudo"})
     main.string = text
