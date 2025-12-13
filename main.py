@@ -1,4 +1,5 @@
 import os
+import base64
 import shutil
 import zipfile
 from dataclasses import dataclass, field
@@ -87,7 +88,7 @@ async def convert_pdf(
     )
 
     create_structure(base_dir)
-    generate_files(base_dir, html_content)
+    generate_files(base_dir, html_content, html_title)
     create_pnld_package(base_dir, output_pnld)
 
     if output_pnld.stat().st_size > MAX_PACKAGE_SIZE_BYTES:
@@ -316,9 +317,11 @@ def create_structure(base_path: Path):
     structure = [
         "content",
         "resources/images",
+        "resources/audios",
+        "resources/videos",
         "resources/styles",
         "resources/scripts",
-        "resources/fonts"
+        "resources/fonts",
     ]
     for folder in structure:
         dir_path = base_path / folder
@@ -327,8 +330,16 @@ def create_structure(base_path: Path):
         keep_file.write_text("", encoding="utf-8")
 
 
-def generate_files(base_path: Path, html_content: str):
+def generate_files(base_path: Path, html_content: str, title: str):
     (base_path / "index.html").write_text(html_content, encoding="utf-8")
+
+    content_file = base_path / "content" / "unidade_01.html"
+    content_file.write_text(html_content, encoding="utf-8")
+
+    (base_path / "toc.ncx").write_text(default_toc_ncx(title), encoding="utf-8")
+    (base_path / "content.opf").write_text(default_content_opf(title), encoding="utf-8")
+
+    write_placeholder_cover(base_path / "cover.jpg")
 
 
 def create_pnld_package(base_path: Path, output_zip: Path) -> Path:
@@ -338,3 +349,57 @@ def create_pnld_package(base_path: Path, output_zip: Path) -> Path:
                 path = Path(root) / file
                 zf.write(path, path.relative_to(base_path))
     return output_zip
+
+def default_toc_ncx(title: str) -> str:
+    return """<?xml version='1.0' encoding='UTF-8'?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head>
+    <meta name="dtb:uid" content="pnld-package" />
+    <meta name="dtb:depth" content="1" />
+    <meta name="dtb:totalPageCount" content="0" />
+    <meta name="dtb:maxPageNumber" content="0" />
+  </head>
+  <docTitle>
+    <text>{title}</text>
+  </docTitle>
+  <navMap>
+    <navPoint id="navpoint-1" playOrder="1">
+      <navLabel>
+        <text>Conteúdo</text>
+      </navLabel>
+      <content src="content/unidade_01.html" />
+    </navPoint>
+  </navMap>
+</ncx>
+"""
+
+
+def default_content_opf(title: str) -> str:
+    return """<?xml version='1.0' encoding='UTF-8'?>
+<package version="2.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>{title}</dc:title>
+    <dc:identifier id="BookId">pnld-package</dc:identifier>
+    <dc:language>pt-BR</dc:language>
+  </metadata>
+  <manifest>
+    <item id="index" href="index.html" media-type="application/xhtml+xml" />
+    <item id="unidade_01" href="content/unidade_01.html" media-type="application/xhtml+xml" />
+    <item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml" />
+    <item id="cover" href="cover.jpg" media-type="image/jpeg" />
+  </manifest>
+  <spine toc="toc">
+    <itemref idref="index" />
+    <itemref idref="unidade_01" />
+  </spine>
+</package>
+"""
+
+
+def write_placeholder_cover(cover_path: Path):
+    placeholder_bytes = base64.b64decode(
+        """
+        /9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBAPEBAVDw8PDw8PDw8PFREPFQ8QFREWFhURFRUYHSggGBolGxUVITEhJSkrLi4uFx8zODMtNygtLisBCgoKDg0OGxAQGy0fHR0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAKgBLAMBIgACEQEDEQH/xAAbAAACAwEBAQAAAAAAAAAAAAADBAACBQEGB//EADwQAAIBAwIEAwUFBAEEAwAAAAECAwAEEQUSITFBBtQVNcDxBhUiMpHwYnLRFjNCI1JicrLxM0Ny/8QAGgEAAgMBAQAAAAAAAAAAAAAAAAQBAgMFBv/EACMRAAICAgICAgMBAAAAAAAAAAABAhEDIRIxBBNBYRRRYXH/2gAMAwEAAhEDEQA/APqREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREH//Z
+        """
+    )
+    cover_path.write_bytes(placeholder_bytes)
