@@ -5,7 +5,7 @@ import shutil
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pdfminer.high_level import extract_text
@@ -106,7 +106,12 @@ async def convert_pdf(
 
 
 def extract_text_from_pdf(pdf_path: Path) -> str:
-    return extract_text(pdf_path)
+    raw_text = extract_text(pdf_path)
+    normalized_lines = [
+        line.strip() for line in raw_text.splitlines()
+    ]
+    return "\n".join(normalized_lines)
+
 
 @dataclass
 class Chapter:
@@ -222,15 +227,8 @@ class CoverMetadata:
     def catalog_card_text(self) -> str:
         return self.catalog_card or "Ficha catalográfica não informada"
 
-
-def generate_html5(
-        chapter: Chapter,
-        title: str = "PNLD Work",
-        cover_metadata: Optional[CoverMetadata] = None,
-        include_cover: bool = False,
-) -> str:
+def _build_base_html(title: str) -> tuple[BeautifulSoup, Any, Any, str]:
     soup = BeautifulSoup("", "html.parser")
-    doctype = "<!DOCTYPE html>"
 
     html = soup.new_tag("html", lang="pt-br")
     head = soup.new_tag("head")
@@ -245,128 +243,137 @@ def generate_html5(
     html.append(head)
 
     body = soup.new_tag("body", attrs={"class": "pnld-obra"})
+    html.append(body)
 
-    if include_cover:
-        if cover_metadata is None:
-            cover_metadata = CoverMetadata(collection_title=title)
+    doctype = "<!DOCTYPE html>"
+    return soup, html, body, doctype
 
-        cover_header = soup.new_tag("header", attrs={"class": "pnld-capa"})
 
-        first_cover = soup.new_tag("section", attrs={"class": "capa-primeira", "data-objeto": "2"})
-        collection_title_tag = soup.new_tag("h1", attrs={"class": "titulo-colecao"})
-        collection_title_tag.string = cover_metadata.collection_title
-        first_cover.append(collection_title_tag)
+def generate_cover_section(soup: BeautifulSoup, cover_metadata: CoverMetadata):
+    cover_header = soup.new_tag("header", attrs={"class": "pnld-capa"})
 
-        if cover_metadata.book_title:
-            book_title_tag = soup.new_tag("h2", attrs={"class": "titulo-livro"})
-            book_title_tag.string = cover_metadata.book_title
-            first_cover.append(book_title_tag)
+    first_cover = soup.new_tag("section", attrs={"class": "capa-primeira", "data-objeto": "2"})
+    collection_title_tag = soup.new_tag("h1", attrs={"class": "titulo-colecao"})
+    collection_title_tag.string = cover_metadata.collection_title
+    first_cover.append(collection_title_tag)
 
-        expression_tag = soup.new_tag("p", attrs={"class": "expressao-objeto"})
-        expression_tag.string = cover_metadata.expression
-        first_cover.append(expression_tag)
+    if cover_metadata.book_title:
+        book_title_tag = soup.new_tag("h2", attrs={"class": "titulo-livro"})
+        book_title_tag.string = cover_metadata.book_title
+        first_cover.append(book_title_tag)
 
-        authors_tag = soup.new_tag("p", attrs={"class": "creditos-autoria"})
-        authors_span = soup.new_tag("span", attrs={"class": "autores"})
-        authors_span.string = f"Autor(es): {cover_metadata.authors_text()}"
-        authors_tag.append(authors_span)
+    expression_tag = soup.new_tag("p", attrs={"class": "expressao-objeto"})
+    expression_tag.string = cover_metadata.expression
+    first_cover.append(expression_tag)
 
-        if cover_metadata.organizer:
-            organizer_span = soup.new_tag("span", attrs={"class": "organizador"})
-            organizer_span.string = f"Organizador: {cover_metadata.organizer}"
-            authors_tag.append(soup.new_tag("br"))
-            authors_tag.append(organizer_span)
-        else:
-            editor_resp = soup.new_tag("span", attrs={"class": "editor-responsavel"})
-            editor_resp.string = f"Editor responsável: {cover_metadata.editor}"
-            authors_tag.append(soup.new_tag("br"))
-            authors_tag.append(editor_resp)
+    authors_tag = soup.new_tag("p", attrs={"class": "creditos-autoria"})
+    authors_span = soup.new_tag("span", attrs={"class": "autores"})
+    authors_span.string = f"Autor(es): {cover_metadata.authors_text()}"
+    authors_tag.append(authors_span)
 
-        first_cover.append(authors_tag)
+    if cover_metadata.organizer:
+        organizer_span = soup.new_tag("span", attrs={"class": "organizador"})
+        organizer_span.string = f"Organizador: {cover_metadata.organizer}"
+        authors_tag.append(soup.new_tag("br"))
+        authors_tag.append(organizer_span)
+    else:
+        editor_resp = soup.new_tag("span", attrs={"class": "editor-responsavel"})
+        editor_resp.string = f"Editor responsável: {cover_metadata.editor}"
+        authors_tag.append(soup.new_tag("br"))
+        authors_tag.append(editor_resp)
 
-        editor_tag = soup.new_tag("p", attrs={"class": "creditos-editor"})
-        editor_span = soup.new_tag("span", attrs={"class": "editor"})
-        editor_span.string = f"Editor: {cover_metadata.editor}"
-        editor_tag.append(editor_span)
-        first_cover.append(editor_tag)
+    first_cover.append(authors_tag)
 
-        cover_header.append(first_cover)
+    editor_tag = soup.new_tag("p", attrs={"class": "creditos-editor"})
+    editor_span = soup.new_tag("span", attrs={"class": "editor"})
+    editor_span.string = f"Editor: {cover_metadata.editor}"
+    editor_tag.append(editor_span)
+    first_cover.append(editor_tag)
 
-        second_cover = soup.new_tag("section", attrs={"class": "capa-segunda", "data-objeto": "2"})
-        cover_header.append(second_cover)
+    cover_header.append(first_cover)
 
-        third_cover = soup.new_tag("section", attrs={"class": "capa-terceira", "data-objeto": "2"})
-        cover_header.append(third_cover)
+    second_cover = soup.new_tag("section", attrs={"class": "capa-segunda", "data-objeto": "2"})
+    cover_header.append(second_cover)
 
-        fourth_cover = soup.new_tag("section", attrs={"class": "capa-quarta", "data-objeto": "2"})
-        isbn_paragraph = soup.new_tag("p", attrs={"class": "identificacao-isbn"})
-        isbn_span = soup.new_tag("span", attrs={"class": "isbn"})
-        isbn_span.string = f"ISBN: {cover_metadata.isbn_text()}"
-        isbn_paragraph.append(isbn_span)
-        fourth_cover.append(isbn_paragraph)
-        cover_header.append(fourth_cover)
+    third_cover = soup.new_tag("section", attrs={"class": "capa-terceira", "data-objeto": "2"})
+    cover_header.append(third_cover)
 
-        body.append(cover_header)
+    fourth_cover = soup.new_tag("section", attrs={"class": "capa-quarta", "data-objeto": "2"})
+    isbn_paragraph = soup.new_tag("p", attrs={"class": "identificacao-isbn"})
+    isbn_span = soup.new_tag("span", attrs={"class": "isbn"})
+    isbn_span.string = f"ISBN: {cover_metadata.isbn_text()}"
+    isbn_paragraph.append(isbn_span)
+    fourth_cover.append(isbn_paragraph)
+    cover_header.append(fourth_cover)
 
-        folha_rosto = soup.new_tag("section", attrs={"class": "folha-rosto", "data-objeto": "2"})
+    return cover_header
 
-        face_titles = soup.new_tag("div", attrs={"class": "folha-rosto-titulos"})
-        face_collection_title = soup.new_tag("h1", attrs={"class": "titulo-colecao"})
-        face_collection_title.string = cover_metadata.collection_title
-        face_titles.append(face_collection_title)
 
-        if cover_metadata.book_title:
-            face_book_title = soup.new_tag("h2", attrs={"class": "titulo-livro"})
-            face_book_title.string = cover_metadata.book_title
-            face_titles.append(face_book_title)
+def generate_front_matter(soup: BeautifulSoup, cover_metadata: CoverMetadata):
+    folha_rosto = soup.new_tag("section", attrs={"class": "folha-rosto", "data-objeto": "2"})
 
-        folha_rosto.append(face_titles)
+    face_titles = soup.new_tag("div", attrs={"class": "folha-rosto-titulos"})
+    face_collection_title = soup.new_tag("h1", attrs={"class": "titulo-colecao"})
+    face_collection_title.string = cover_metadata.collection_title
+    face_titles.append(face_collection_title)
 
-        face_expression = soup.new_tag("p", attrs={"class": "expressao-objeto"})
-        face_expression.string = cover_metadata.expression
-        folha_rosto.append(face_expression)
+    if cover_metadata.book_title:
+        face_book_title = soup.new_tag("h2", attrs={"class": "titulo-livro"})
+        face_book_title.string = cover_metadata.book_title
+        face_titles.append(face_book_title)
 
-        face_authors = soup.new_tag("p", attrs={"class": "creditos-autoria"})
-        face_authors.string = f"Autor(es): {cover_metadata.authors_text()}"
-        if cover_metadata.organizer:
-            organizer_info = soup.new_tag("span", attrs={"class": "organizador"})
-            organizer_info.string = f"Organizador: {cover_metadata.organizer}"
-            face_authors.append(soup.new_tag("br"))
-            face_authors.append(organizer_info)
-        folha_rosto.append(face_authors)
+    folha_rosto.append(face_titles)
 
-        author_background = soup.new_tag("p", attrs={"class": "formacao-experiencia"})
-        author_background.string = cover_metadata.author_background_text()
-        folha_rosto.append(author_background)
+    face_expression = soup.new_tag("p", attrs={"class": "expressao-objeto"})
+    face_expression.string = cover_metadata.expression
+    folha_rosto.append(face_expression)
 
-        face_editor = soup.new_tag("p", attrs={"class": "creditos-editor"})
-        face_editor.string = f"Editor: {cover_metadata.editor}"
-        folha_rosto.append(face_editor)
+    face_authors = soup.new_tag("p", attrs={"class": "creditos-autoria"})
+    face_authors.string = f"Autor(es): {cover_metadata.authors_text()}"
+    if cover_metadata.organizer:
+        organizer_info = soup.new_tag("span", attrs={"class": "organizador"})
+        organizer_info.string = f"Organizador: {cover_metadata.organizer}"
+        face_authors.append(soup.new_tag("br"))
+        face_authors.append(organizer_info)
+    folha_rosto.append(face_authors)
 
-        edition_info = soup.new_tag("p", attrs={"class": "informacoes-edicao"})
-        edition_info.string = (
-            f"Edição: {cover_metadata.edition_text()} | "
-            f"Local: {cover_metadata.publication_city_text()} | "
-            f"Ano: {cover_metadata.publication_year_text()}"
-        )
-        folha_rosto.append(edition_info)
+    author_background = soup.new_tag("p", attrs={"class": "formacao-experiencia"})
+    author_background.string = cover_metadata.author_background_text()
+    folha_rosto.append(author_background)
 
-        verso_folha_rosto = soup.new_tag(
-            "section", attrs={"class": "verso=folha-rosto", "data-objeto": "2"}
-        )
+    face_editor = soup.new_tag("p", attrs={"class": "creditos-editor"})
+    face_editor.string = f"Editor: {cover_metadata.editor}"
+    folha_rosto.append(face_editor)
 
-        catalog_card = soup.new_tag("p", attrs={"class": "ficha-catalografica"})
-        catalog_card.string = cover_metadata.catalog_card_text()
-        verso_folha_rosto.append(catalog_card)
+    edition_info = soup.new_tag("p", attrs={"class": "informacoes-edicao"})
+    edition_info.string = (
+        f"Edição: {cover_metadata.edition_text()} | "
+        f"Local: {cover_metadata.publication_city_text()} | "
+        f"Ano: {cover_metadata.publication_year_text()}"
+    )
+    folha_rosto.append(edition_info)
 
-        editor_info = soup.new_tag("p", attrs={"class": "informacoes-editor"})
-        editor_info.string = (
-            f"Editor: {cover_metadata.editor} | Endereço: {cover_metadata.editor_address_text()}"
-        )
-        verso_folha_rosto.append(editor_info)
+    verso_folha_rosto = soup.new_tag(
+        "section", attrs={"class": "verso-folha-rosto", "data-objeto": "2"}
+    )
 
-        body.append(folha_rosto)
-        body.append(verso_folha_rosto)
+    catalog_card = soup.new_tag("p", attrs={"class": "ficha-catalografica"})
+    catalog_card.string = cover_metadata.catalog_card_text()
+    verso_folha_rosto.append(catalog_card)
+
+    editor_info = soup.new_tag("p", attrs={"class": "informacoes-editor"})
+    editor_info.string = (
+        f"Editor: {cover_metadata.editor} | Endereço: {cover_metadata.editor_address_text()}"
+    )
+    verso_folha_rosto.append(editor_info)
+
+    return folha_rosto, verso_folha_rosto
+
+def generate_content_html(
+        chapter: Chapter,
+        title: str = "PNLD Work",
+) -> str:
+    soup, html, body, doctype = _build_base_html(title)
 
     main = soup.new_tag("main", attrs={"class": "conteudo"})
     heading = soup.new_tag("h2")
@@ -379,7 +386,73 @@ def generate_html5(
         main.append(p_tag)
     body.append(main)
 
-    html.append(body)
+    return f"{doctype}\n{str(html)}"
+
+def generate_pre_textual_html(title: str, cover_metadata: CoverMetadata) -> str:
+    soup, html, body, doctype = _build_base_html(title)
+    main = soup.new_tag("main", attrs={"class": "conteudo"})
+
+    heading = soup.new_tag("h2")
+    heading.string = "Materiais pré-textuais"
+    main.append(heading)
+
+    resumo = soup.new_tag("p")
+    resumo.string = (
+        "Esta seção reúne informações editoriais e de autoria fornecidas para a obra."
+        )
+    main.append(resumo)
+
+    autores = soup.new_tag("p")
+    autores.string = f"Autor(es): {cover_metadata.authors_text()}"
+    main.append(autores)
+
+    contexto = soup.new_tag("p")
+    contexto.string = cover_metadata.author_background_text()
+    main.append(contexto)
+
+    edicao = soup.new_tag("p")
+    edicao.string = (
+        f"Edição: {cover_metadata.edition_text()} | Local: {cover_metadata.publication_city_text()} | "
+        f"Ano: {cover_metadata.publication_year_text()}"
+    )
+    main.append(edicao)
+
+    body.append(main)
+    return f"{doctype}\n{str(html)}"
+
+def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: list[tuple[str, str]]) -> str:
+    soup, html, body, doctype = _build_base_html(title)
+
+    cover_header = generate_cover_section(soup, cover_metadata)
+    body.append(cover_header)
+
+    folha_rosto, verso_folha_rosto = generate_front_matter(soup, cover_metadata)
+    body.append(folha_rosto)
+    body.append(verso_folha_rosto)
+
+    apresentacao = soup.new_tag("section", attrs={"class": "apresentacao", "data-objeto": "2"})
+    apresentacao_heading = soup.new_tag("h2")
+    apresentacao_heading.string = "Apresentação"
+    apresentacao.append(apresentacao_heading)
+    apresentacao_paragraph = soup.new_tag("p")
+    apresentacao_paragraph.string = cover_metadata.expression
+    apresentacao.append(apresentacao_paragraph)
+    body.append(apresentacao)
+
+    nav = soup.new_tag("nav", role="doc-toc")
+    nav_heading = soup.new_tag("h2")
+    nav_heading.string = "Sumário"
+    nav.append(nav_heading)
+
+    toc_list = soup.new_tag("ul")
+    for entry_title, href in toc_entries:
+        li = soup.new_tag("li")
+        link = soup.new_tag("a", href=href)
+        link.string = entry_title
+        li.append(link)
+        toc_list.append(li)
+    nav.append(toc_list)
+    body.append(nav)
     return f"{doctype}\n{str(html)}"
 
 
@@ -406,28 +479,37 @@ def generate_files(
         title: str,
         cover_metadata: Optional[CoverMetadata],
 ):
+    content_dir = base_path / "content"
+    toc_entries: list[tuple[str, str]] = []
+
+    pre_textual_file = content_dir / "pre_textual.html"
+    pre_textual_html = generate_pre_textual_html(title, cover_metadata or CoverMetadata(collection_title=title))
+    pre_textual_file.write_text(pre_textual_html, encoding="utf-8")
+    toc_entries.append(("Materiais pré-textuais", f"content/{pre_textual_file.name}"))
     chapter_files: list[str] = []
 
     for index, chapter in enumerate(chapters, start=1):
-        include_cover = index == 1
-        html_content = generate_html5(
+        html_content = generate_content_html(
             chapter,
             title=title,
-            cover_metadata=cover_metadata,
-            include_cover=include_cover,
         )
 
-        if include_cover:
-            (base_path / "index.html").write_text(html_content, encoding="utf-8")
-
-        file_name = f"unidade_{index:02}.html"
-        content_file = base_path / "content" / file_name
+        file_name = f"capitulo_{index:02}.html"
+        content_file = content_dir / file_name
         content_file.write_text(html_content, encoding="utf-8")
         chapter_files.append(file_name)
+        toc_entries.append((chapter.title, f"content/{file_name}"))
 
+    if cover_metadata is None:
+        cover_metadata = CoverMetadata(collection_title=title)
 
-    (base_path / "toc.ncx").write_text(default_toc_ncx(title, chapters, chapter_files), encoding="utf-8")
-    (base_path / "content.opf").write_text(default_content_opf(title, chapter_files), encoding="utf-8")
+    index_html = generate_index_html(title, cover_metadata, toc_entries)
+    (base_path / "index.html").write_text(index_html, encoding="utf-8")
+
+    all_content_files = [pre_textual_file.name] + chapter_files
+
+    (base_path / "toc.ncx").write_text(default_toc_ncx(title, toc_entries), encoding="utf-8")
+    (base_path / "content.opf").write_text(default_content_opf(title, all_content_files), encoding="utf-8")
 
     write_placeholder_cover(base_path / "cover.jpg")
 
@@ -440,15 +522,15 @@ def create_pnld_package(base_path: Path, output_zip: Path) -> Path:
                 zf.write(path, path.relative_to(base_path))
     return output_zip
 
-def default_toc_ncx(title: str, chapters: list[Chapter], chapter_files: list[str]) -> str:
+def default_toc_ncx(title: str, toc_entries: list[tuple[str, str]]) -> str:
     navpoints = []
-    for order, (chapter, file_name) in enumerate(zip(chapters, chapter_files), start=1):
+    for order, (entry_title, href) in enumerate(toc_entries, start=1):
         navpoints.append(
             f"    <navPoint id=\"navpoint-{order}\" playOrder=\"{order}\">\n"
             f"      <navLabel>\n"
-            f"        <text>{chapter.title}</text>\n"
+            f"        <text>{entry_title}</text>\n"
             f"      </navLabel>\n"
-            f"      <content src=\"content/{file_name}\" />\n"
+            f"      <content src=\"{href}\" />\n"
             f"    </navPoint>"
         )
 
@@ -473,12 +555,12 @@ def default_toc_ncx(title: str, chapters: list[Chapter], chapter_files: list[str
     )
 
 
-def default_content_opf(title: str, chapter_files: list[str]) -> str:
+def default_content_opf(title: str, content_files: list[str]) -> str:
     manifest_items = ["    <item id=\"index\" href=\"index.html\" media-type=\"application/xhtml+xml\" />"]
     spine_items = ["    <itemref idref=\"index\" />"]
 
-    for idx, file_name in enumerate(chapter_files, start=1):
-        item_id = f"unidade_{idx:02}"
+    for file_name in content_files:
+        item_id = Path(file_name).stem
         manifest_items.append(
             f"    <item id=\"{item_id}\" href=\"content/{file_name}\" media-type=\"application/xhtml+xml\" />"
         )
