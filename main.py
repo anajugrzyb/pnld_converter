@@ -3,6 +3,7 @@ import base64
 import re
 import shutil
 import zipfile
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -43,6 +44,7 @@ async def convert_pdf(
         publication_year: Optional[str] = Form(None),
         isbn: Optional[str] = Form(None),
         catalog_card: Optional[str] = Form(None),
+        page_map: Optional[str] = Form(None),
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Please upload a valid PDF file.")
@@ -89,7 +91,15 @@ async def convert_pdf(
 
 
     create_structure(base_dir)
-    generate_files(base_dir, chapters, html_title, cover_metadata)
+    parsed_page_map = parse_page_map(page_map)
+
+    generate_files(
+        base_dir,
+        chapters,
+        html_title,
+        cover_metadata,
+        page_map=parsed_page_map,
+    )
     create_pnld_package(base_dir, output_pnld)
 
     if output_pnld.stat().st_size > MAX_PACKAGE_SIZE_BYTES:
@@ -455,6 +465,52 @@ def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: 
     body.append(nav)
     return f"{doctype}\n{str(html)}"
 
+def inject_page_numbers(html: str, page_map: dict[str, Any]) -> str:
+    if not page_map:
+        return html
+
+    soup = BeautifulSoup(html, "html.parser")
+    body = soup.body or soup
+
+    for marker, page_number in page_map.items():
+        target_element = None
+
+        for text_node in body.find_all(string=True):
+            if marker in text_node:
+                target_element = text_node.parent
+                break
+
+        if target_element is None:
+            continue
+
+        page_break = soup.new_tag("p", role="doc-pagebreak")
+        page_number_span = soup.new_tag("span", attrs={"class": "page-number"})
+        page_number_span.string = str(page_number)
+        page_break.append(page_number_span)
+
+        target_element.insert_before(page_break)
+
+    return str(soup)
+
+
+def parse_page_map(raw_page_map: Optional[str]) -> dict[str, dict[str, Any]]:
+    if not raw_page_map:
+        return {}
+
+    try:
+        parsed = json.loads(raw_page_map)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="page_map deve ser um JSON válido.")
+
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="page_map deve ser um objeto JSON.")
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for file_name, mapping in parsed.items():
+        if isinstance(mapping, dict):
+            normalized[file_name] = mapping
+    return normalized
+
 
 def create_structure(base_path: Path):
     structure = [
@@ -478,13 +534,22 @@ def generate_files(
         chapters: list[Chapter],
         title: str,
         cover_metadata: Optional[CoverMetadata],
+        page_map: Optional[dict[str, dict[str, Any]]] = None,
 ):
+    effective_page_map = page_map or {}
+
+    def find_page_map_for(file_name: str) -> dict[str, Any]:
+        return effective_page_map.get(file_name) or effective_page_map.get(f"content/{file_name}") or {}
+
     content_dir = base_path / "content"
     toc_entries: list[tuple[str, str]] = []
 
     pre_textual_file = content_dir / "pre_textual.html"
     pre_textual_html = generate_pre_textual_html(title, cover_metadata or CoverMetadata(collection_title=title))
-    pre_textual_file.write_text(pre_textual_html, encoding="utf-8")
+    pre_textual_file.write_text(
+        inject_page_numbers(pre_textual_html, find_page_map_for(pre_textual_file.name)),
+        encoding="utf-8",
+    )
     toc_entries.append(("Materiais pré-textuais", f"content/{pre_textual_file.name}"))
     chapter_files: list[str] = []
 
@@ -496,7 +561,10 @@ def generate_files(
 
         file_name = f"capitulo_{index:02}.html"
         content_file = content_dir / file_name
-        content_file.write_text(html_content, encoding="utf-8")
+        content_file.write_text(
+            inject_page_numbers(html_content, find_page_map_for(file_name)),
+            encoding="utf-8",
+        )
         chapter_files.append(file_name)
         toc_entries.append((chapter.title, f"content/{file_name}"))
 
@@ -504,7 +572,10 @@ def generate_files(
         cover_metadata = CoverMetadata(collection_title=title)
 
     index_html = generate_index_html(title, cover_metadata, toc_entries)
-    (base_path / "index.html").write_text(index_html, encoding="utf-8")
+    (base_path / "index.html").write_text(
+        inject_page_numbers(index_html, effective_page_map.get("index.html", {})),
+        encoding="utf-8",
+    )
 
     all_content_files = [pre_textual_file.name] + chapter_files
 
