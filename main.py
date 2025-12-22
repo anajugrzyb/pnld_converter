@@ -451,7 +451,7 @@ def generate_pre_textual_html(title: str, cover_metadata: CoverMetadata) -> str:
     body.append(main)
     return f"{doctype}\n{str(html)}"
 
-def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: list[tuple[str, str]]) -> str:
+def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: list[tuple[str, str, str]]) -> str:
     soup, html, body, doctype = _build_base_html(title)
 
     head = soup.head or html.find("head")
@@ -540,15 +540,100 @@ def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: 
     nav.append(nav_heading)
 
     toc_list = soup.new_tag("ul")
-    for entry_title, href in toc_entries:
+    for entry_title, href, page_number in toc_entries:
         li = soup.new_tag("li")
         link = soup.new_tag("a", href=href)
         link.string = entry_title
         li.append(link)
+
+        page_span = soup.new_tag("span", attrs={"class": "toc-page"})
+        page_span.string = page_number
+        li.append(page_span)
+
         toc_list.append(li)
     nav.append(toc_list)
     body.append(nav)
     return f"{doctype}\n{str(html)}"
+
+def to_roman(number: int) -> str:
+    mapping = [
+        (1000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ]
+
+    result = ""
+    remaining = max(0, number)
+    for value, symbol in mapping:
+        while remaining >= value:
+            result += symbol
+            remaining -= value
+    return result or str(number)
+
+
+def build_page_anchor_id(display_number: str) -> str:
+    safe_display = re.sub(r"[^A-Za-z0-9_-]+", "-", str(display_number)).strip("-") or "page"
+    return f"page-{safe_display}"
+
+
+def normalize_page_info(raw_page_info: Any) -> tuple[str, bool, Optional[int]]:
+    is_manual_professor = False
+    page_number_value: Any = raw_page_info
+    if isinstance(raw_page_info, dict):
+        is_manual_professor = bool(
+            raw_page_info.get("mp")
+            or raw_page_info.get("is_mp")
+            or raw_page_info.get("manual_do_professor")
+        )
+        for key in ("number", "numero", "page", "pagina", "value"):
+            if key in raw_page_info:
+                page_number_value = raw_page_info[key]
+                break
+
+    try:
+        numeric_page = int(page_number_value)
+    except (TypeError, ValueError):
+        numeric_page = None
+
+    display_number = (
+        to_roman(numeric_page) if is_manual_professor and numeric_page is not None else str(page_number_value)
+    )
+
+    return display_number, is_manual_professor, numeric_page
+
+
+def extract_primary_page_reference(page_map_for_file: dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+    if not page_map_for_file:
+        return None, None
+
+    best_display: Optional[str] = None
+    best_anchor: Optional[str] = None
+    best_numeric: Optional[int] = None
+
+    for _, raw_page_info in page_map_for_file.items():
+        display_number, _, numeric_page = normalize_page_info(raw_page_info)
+        anchor_id = build_page_anchor_id(display_number)
+
+        if best_display is None:
+            best_display, best_anchor, best_numeric = display_number, anchor_id, numeric_page
+            continue
+
+        if numeric_page is not None and (best_numeric is None or numeric_page < best_numeric):
+            best_display, best_anchor, best_numeric = display_number, anchor_id, numeric_page
+
+    return best_display, best_anchor
+
+
 
 def inject_page_numbers(html: str, page_map: dict[str, Any]) -> str:
     if not page_map:
@@ -556,31 +641,6 @@ def inject_page_numbers(html: str, page_map: dict[str, Any]) -> str:
 
     soup = BeautifulSoup(html, "html.parser")
     body = soup.body or soup
-
-    def to_roman(number: int) -> str:
-        mapping = [
-            (1000, "M"),
-            (900, "CM"),
-            (500, "D"),
-            (400, "CD"),
-            (100, "C"),
-            (90, "XC"),
-            (50, "L"),
-            (40, "XL"),
-            (10, "X"),
-            (9, "IX"),
-            (5, "V"),
-            (4, "IV"),
-            (1, "I"),
-        ]
-
-        result = ""
-        remaining = max(0, number)
-        for value, symbol in mapping:
-            while remaining >= value:
-                result += symbol
-                remaining -= value
-        return result or str(number)
 
     for marker, raw_page_info in page_map.items():
         marker_node = None
@@ -593,27 +653,7 @@ def inject_page_numbers(html: str, page_map: dict[str, Any]) -> str:
         if marker_node is None:
             continue
 
-        is_manual_professor = False
-        page_number_value: Any = raw_page_info
-        if isinstance(raw_page_info, dict):
-            is_manual_professor = bool(
-                raw_page_info.get("mp")
-                or raw_page_info.get("is_mp")
-                or raw_page_info.get("manual_do_professor")
-            )
-            for key in ("number", "numero", "page", "pagina", "value"):
-                if key in raw_page_info:
-                    page_number_value = raw_page_info[key]
-                    break
-
-        try:
-            numeric_page = int(page_number_value)
-        except (TypeError, ValueError):
-            numeric_page = None
-
-        display_number = (
-            to_roman(numeric_page) if is_manual_professor and numeric_page is not None else str(page_number_value)
-        )
+        display_number, is_manual_professor, _ = normalize_page_info(raw_page_info)
 
         aria_label = f"Página {display_number}"
         if is_manual_professor:
@@ -625,6 +665,8 @@ def inject_page_numbers(html: str, page_map: dict[str, Any]) -> str:
         page_number_span = soup.new_tag("span", attrs={"class": "page-number"})
         page_number_span.string = display_number
         page_break.extend([page_label_span, page_number_span])
+
+        page_break["id"] = build_page_anchor_id(display_number)
 
         if is_manual_professor:
             mp_suffix_span = soup.new_tag("span", attrs={"class": "mp-suffix visually-hidden"})
@@ -717,15 +759,20 @@ def generate_files(
         return effective_page_map.get(file_name) or effective_page_map.get(f"content/{file_name}") or {}
 
     content_dir = base_path / "content"
-    toc_entries: list[tuple[str, str]] = []
+    toc_entries: list[tuple[str, str, str]] = []
 
     pre_textual_file = content_dir / "pre_textual.html"
     pre_textual_html = generate_pre_textual_html(title, cover_metadata or CoverMetadata(collection_title=title))
+    pre_textual_page_map = find_page_map_for(pre_textual_file.name)
     pre_textual_file.write_text(
-        inject_page_numbers(pre_textual_html, find_page_map_for(pre_textual_file.name)),
+        inject_page_numbers(pre_textual_html, pre_textual_page_map),
         encoding="utf-8",
     )
-    toc_entries.append(("Materiais pré-textuais", f"content/{pre_textual_file.name}"))
+    pre_textual_page, pre_textual_anchor = extract_primary_page_reference(pre_textual_page_map)
+    pre_textual_href = f"content/{pre_textual_file.name}"
+    if pre_textual_anchor:
+        pre_textual_href = f"{pre_textual_href}#{pre_textual_anchor}"
+    toc_entries.append(("Materiais pré-textuais", pre_textual_href, pre_textual_page or "—"))
     chapter_files: list[str] = []
 
     for index, chapter in enumerate(chapters, start=1):
@@ -736,12 +783,18 @@ def generate_files(
 
         file_name = f"capitulo_{index:02}.html"
         content_file = content_dir / file_name
+        chapter_page_map = find_page_map_for(file_name)
         content_file.write_text(
             inject_page_numbers(html_content, find_page_map_for(file_name)),
+            inject_page_numbers(html_content, chapter_page_map),
             encoding="utf-8",
         )
         chapter_files.append(file_name)
-        toc_entries.append((chapter.title, f"content/{file_name}"))
+        chapter_page, chapter_anchor = extract_primary_page_reference(chapter_page_map)
+        chapter_href = f"content/{file_name}"
+        if chapter_anchor:
+            chapter_href = f"{chapter_href}#{chapter_anchor}"
+        toc_entries.append((chapter.title, chapter_href, chapter_page or "—"))
 
     if cover_metadata is None:
         cover_metadata = CoverMetadata(collection_title=title)
