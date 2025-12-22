@@ -557,23 +557,112 @@ def inject_page_numbers(html: str, page_map: dict[str, Any]) -> str:
     soup = BeautifulSoup(html, "html.parser")
     body = soup.body or soup
 
-    for marker, page_number in page_map.items():
-        target_element = None
+    def to_roman(number: int) -> str:
+        mapping = [
+            (1000, "M"),
+            (900, "CM"),
+            (500, "D"),
+            (400, "CD"),
+            (100, "C"),
+            (90, "XC"),
+            (50, "L"),
+            (40, "XL"),
+            (10, "X"),
+            (9, "IX"),
+            (5, "V"),
+            (4, "IV"),
+            (1, "I"),
+        ]
+
+        result = ""
+        remaining = max(0, number)
+        for value, symbol in mapping:
+            while remaining >= value:
+                result += symbol
+                remaining -= value
+        return result or str(number)
+
+    for marker, raw_page_info in page_map.items():
+        marker_node = None
 
         for text_node in body.find_all(string=True):
             if marker in text_node:
-                target_element = text_node.parent
+                marker_node = text_node
                 break
 
-        if target_element is None:
+        if marker_node is None:
             continue
 
-        page_break = soup.new_tag("p", role="doc-pagebreak")
-        page_number_span = soup.new_tag("span", attrs={"class": "page-number"})
-        page_number_span.string = str(page_number)
-        page_break.append(page_number_span)
+        is_manual_professor = False
+        page_number_value: Any = raw_page_info
+        if isinstance(raw_page_info, dict):
+            is_manual_professor = bool(
+                raw_page_info.get("mp")
+                or raw_page_info.get("is_mp")
+                or raw_page_info.get("manual_do_professor")
+            )
+            for key in ("number", "numero", "page", "pagina", "value"):
+                if key in raw_page_info:
+                    page_number_value = raw_page_info[key]
+                    break
 
-        target_element.insert_before(page_break)
+        try:
+            numeric_page = int(page_number_value)
+        except (TypeError, ValueError):
+            numeric_page = None
+
+        display_number = (
+            to_roman(numeric_page) if is_manual_professor and numeric_page is not None else str(page_number_value)
+        )
+
+        aria_label = f"Página {display_number}"
+        if is_manual_professor:
+            aria_label = f"{aria_label} – Manual do Professor"
+
+        page_break = soup.new_tag("p", role="doc-pagebreak", attrs={"aria-label": aria_label})
+        page_label_span = soup.new_tag("span", attrs={"class": "page-label visually-hidden"})
+        page_label_span.string = "Página"
+        page_number_span = soup.new_tag("span", attrs={"class": "page-number"})
+        page_number_span.string = display_number
+        page_break.extend([page_label_span, page_number_span])
+
+        if is_manual_professor:
+            mp_suffix_span = soup.new_tag("span", attrs={"class": "mp-suffix visually-hidden"})
+            mp_suffix_span.string = "MP"
+            page_break.append(mp_suffix_span)
+
+        marker_parent = marker_node.parent
+        if marker_parent and marker_parent.parent:
+            logical_container = next(
+                (ancestor for ancestor in marker_node.parents if
+                 getattr(ancestor, "name", "") in {"section", "article"}),
+                None,
+            )
+
+            if logical_container is not None:
+                logical_container.insert(0, page_break)
+            else:
+                top_level_block = next(
+                    (
+                        ancestor
+                        for ancestor in marker_node.parents
+                        if getattr(ancestor, "parent", None) is body and ancestor is not body
+                    ),
+                    None,
+                )
+
+                if top_level_block is not None:
+                    top_level_block.insert_before(page_break)
+                else:
+                    body.insert(0, page_break)
+        else:
+            body.insert(0, page_break)
+
+        cleaned_text = marker_node.replace(marker, "")
+        if cleaned_text.strip():
+            marker_node.replace_with(cleaned_text)
+        else:
+            marker_node.extract()
 
     return str(soup)
 
