@@ -387,47 +387,66 @@ def generate_content_html(
 ) -> str:
     soup, html, body, doctype = _build_base_html(title)
 
-    main = soup.new_tag("main", attrs={"class": "conteudo"})
+    main = soup.new_tag("main", attrs={"class": "conteudo", "role": "main"})
+
+    header = soup.new_tag("header")
+    book_heading = soup.new_tag("h1")
+    book_heading.string = title
+    header.append(book_heading)
+    main.append(header)
+
+    chapter_section = soup.new_tag("section", attrs={"aria-label": chapter.title})
     heading = soup.new_tag("h2")
     heading.string = chapter.title
-    main.append(heading)
+    chapter_section.append(heading)
 
     for paragraph in chapter.paragraphs:
         p_tag = soup.new_tag("p")
         p_tag.string = paragraph
-        main.append(p_tag)
+        chapter_section.append(p_tag)
+
+    main.append(chapter_section)
     body.append(main)
 
     return f"{doctype}\n{str(html)}"
 
 def generate_pre_textual_html(title: str, cover_metadata: CoverMetadata) -> str:
     soup, html, body, doctype = _build_base_html(title)
-    main = soup.new_tag("main", attrs={"class": "conteudo"})
+    main = soup.new_tag("main", attrs={"class": "conteudo", "role": "main"})
 
-    heading = soup.new_tag("h2")
-    heading.string = "Materiais pré-textuais"
-    main.append(heading)
+    header = soup.new_tag("header")
+    heading = soup.new_tag("h1")
+    heading.string = title
+    header.append(heading)
+    main.append(header)
+
+    pre_textual_section = soup.new_tag("section", attrs={"aria-label": "Materiais pré-textuais"})
+    section_heading = soup.new_tag("h2")
+    section_heading.string = "Materiais pré-textuais"
+    pre_textual_section.append(section_heading)
 
     resumo = soup.new_tag("p")
     resumo.string = (
         "Esta seção reúne informações editoriais e de autoria fornecidas para a obra."
         )
-    main.append(resumo)
+    pre_textual_section.append(resumo)
 
     autores = soup.new_tag("p")
     autores.string = f"Autor(es): {cover_metadata.authors_text()}"
-    main.append(autores)
+    pre_textual_section.append(autores)
 
     contexto = soup.new_tag("p")
     contexto.string = cover_metadata.author_background_text()
-    main.append(contexto)
+    pre_textual_section.append(contexto)
 
     edicao = soup.new_tag("p")
     edicao.string = (
         f"Edição: {cover_metadata.edition_text()} | Local: {cover_metadata.publication_city_text()} | "
         f"Ano: {cover_metadata.publication_year_text()}"
     )
-    main.append(edicao)
+    pre_textual_section.append(edicao)
+
+    main.append(pre_textual_section)
 
     body.append(main)
     return f"{doctype}\n{str(html)}"
@@ -435,23 +454,30 @@ def generate_pre_textual_html(title: str, cover_metadata: CoverMetadata) -> str:
 def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: list[tuple[str, str]]) -> str:
     soup, html, body, doctype = _build_base_html(title)
 
+    main = soup.new_tag("main", attrs={"role": "main"})
+    header = soup.new_tag("header", attrs={"class": "cabecalho-obra"})
+    main_heading = soup.new_tag("h1")
+    main_heading.string = title
+    header.append(main_heading)
+    main.append(header)
+
     cover_header = generate_cover_section(soup, cover_metadata)
-    body.append(cover_header)
+    main.append(cover_header)
 
     folha_rosto, verso_folha_rosto = generate_front_matter(soup, cover_metadata)
-    body.append(folha_rosto)
-    body.append(verso_folha_rosto)
+    main.append(folha_rosto)
+    main.append(verso_folha_rosto)
 
-    apresentacao = soup.new_tag("section", attrs={"class": "apresentacao", "data-objeto": "2"})
+    apresentacao = soup.new_tag("section", attrs={"class": "apresentacao", "data-objeto": "2", "aria-label": "Apresentação"})
     apresentacao_heading = soup.new_tag("h2")
     apresentacao_heading.string = "Apresentação"
     apresentacao.append(apresentacao_heading)
     apresentacao_paragraph = soup.new_tag("p")
     apresentacao_paragraph.string = cover_metadata.expression
     apresentacao.append(apresentacao_paragraph)
-    body.append(apresentacao)
+    main.append(apresentacao)
 
-    nav = soup.new_tag("nav", role="doc-toc")
+    nav = soup.new_tag("nav", role="doc-toc", attrs={"aria-label": "Sumário"})
     nav_heading = soup.new_tag("h2")
     nav_heading.string = "Sumário"
     nav.append(nav_heading)
