@@ -454,6 +454,9 @@ def generate_pre_textual_html(title: str, cover_metadata: CoverMetadata) -> str:
 def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: list[tuple[str, str]]) -> str:
     soup, html, body, doctype = _build_base_html(title)
 
+    for existing_nav in body.find_all("nav"):
+        existing_nav.decompose()
+
     main = soup.new_tag("main", attrs={"role": "main"})
     header = soup.new_tag("header", attrs={"class": "cabecalho-obra"})
     main_heading = soup.new_tag("h1")
@@ -477,7 +480,9 @@ def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: 
     apresentacao.append(apresentacao_paragraph)
     main.append(apresentacao)
 
-    nav = soup.new_tag("nav", role="doc-toc", attrs={"aria-label": "Sumário"})
+    body.append(main)
+
+    nav = soup.new_tag("nav", id="toc", role="doc-toc", attrs={"aria-label": "Sumário"})
     nav_heading = soup.new_tag("h2")
     nav_heading.string = "Sumário"
     nav.append(nav_heading)
@@ -490,7 +495,6 @@ def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: 
         li.append(link)
         toc_list.append(li)
     nav.append(toc_list)
-    body.append(main)
     body.append(nav)
     return f"{doctype}\n{str(html)}"
 
