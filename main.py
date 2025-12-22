@@ -765,7 +765,7 @@ def generate_files(
         encoding="utf-8",
     )
 
-    write_placeholder_cover(base_path / "cover.jpg")
+    write_placeholder_cover(base_path / "cover")
 
 
 def create_pnld_package(base_path: Path, output_zip: Path) -> Path:
@@ -854,7 +854,7 @@ def default_content_opf(
         spine_items.append(f"    <itemref idref=\"{item_id}\" />")
 
     manifest_items.append("    <item id=\"toc\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\" />")
-    manifest_items.append("    <item id=\"cover\" href=\"cover.jpg\" media-type=\"image/jpeg\" />")
+    manifest_items.append("    <item id=\"cover\" href=\"cover\" media-type=\"image/jpeg\" />")
 
     manifest_block = "\n".join(manifest_items)
     spine_block = "\n".join(spine_items)
