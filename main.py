@@ -254,7 +254,7 @@ def _build_base_html(title: str) -> tuple[BeautifulSoup, Any, Any, str]:
     head.append(title_tag)
     html.append(head)
 
-    body = soup.new_tag("body", attrs={"class": "pnld-obra"})
+    body = soup.new_tag("body", attrs={"class": "pnld-obra", "lang": "pt-BR"})
     html.append(body)
 
     doctype = "<!DOCTYPE html>"
