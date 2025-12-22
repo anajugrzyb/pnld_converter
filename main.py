@@ -490,6 +490,7 @@ def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: 
         li.append(link)
         toc_list.append(li)
     nav.append(toc_list)
+    body.append(main)
     body.append(nav)
     return f"{doctype}\n{str(html)}"
 
