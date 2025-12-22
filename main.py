@@ -5,8 +5,10 @@ import shutil
 import zipfile
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional
+from uuid import uuid4
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pdfminer.high_level import extract_text
@@ -571,6 +573,8 @@ def generate_files(
     if cover_metadata is None:
         cover_metadata = CoverMetadata(collection_title=title)
 
+    identifier = _build_unique_identifier(cover_metadata)
+
     index_html = generate_index_html(title, cover_metadata, toc_entries)
     (base_path / "index.html").write_text(
         inject_page_numbers(index_html, effective_page_map.get("index.html", {})),
@@ -579,8 +583,14 @@ def generate_files(
 
     all_content_files = [pre_textual_file.name] + chapter_files
 
-    (base_path / "toc.ncx").write_text(default_toc_ncx(title, toc_entries), encoding="utf-8")
-    (base_path / "content.opf").write_text(default_content_opf(title, all_content_files), encoding="utf-8")
+    (base_path / "toc.ncx").write_text(
+        default_toc_ncx(title, toc_entries, identifier),
+        encoding="utf-8",
+    )
+    (base_path / "content.opf").write_text(
+        default_content_opf(title, all_content_files, cover_metadata, identifier),
+        encoding="utf-8",
+    )
 
     write_placeholder_cover(base_path / "cover.jpg")
 
@@ -593,7 +603,7 @@ def create_pnld_package(base_path: Path, output_zip: Path) -> Path:
                 zf.write(path, path.relative_to(base_path))
     return output_zip
 
-def default_toc_ncx(title: str, toc_entries: list[tuple[str, str]]) -> str:
+def default_toc_ncx(title: str, toc_entries: list[tuple[str, str]], package_uid: str) -> str:
     navpoints = []
     for order, (entry_title, href) in enumerate(toc_entries, start=1):
         navpoints.append(
@@ -611,7 +621,7 @@ def default_toc_ncx(title: str, toc_entries: list[tuple[str, str]]) -> str:
         "<?xml version='1.0' encoding='UTF-8'?>\n"
         "<ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\">\n"
         "  <head>\n"
-        "    <meta name=\"dtb:uid\" content=\"pnld-package\" />\n"
+        f"    <meta name=\"dtb:uid\" content=\"{package_uid}\" />\n"
         "    <meta name=\"dtb:depth\" content=\"1\" />\n"
         "    <meta name=\"dtb:totalPageCount\" content=\"0\" />\n"
         "    <meta name=\"dtb:maxPageNumber\" content=\"0\" />\n"
@@ -626,7 +636,30 @@ def default_toc_ncx(title: str, toc_entries: list[tuple[str, str]]) -> str:
     )
 
 
-def default_content_opf(title: str, content_files: list[str]) -> str:
+def _build_unique_identifier(cover_metadata: CoverMetadata) -> str:
+    if cover_metadata.isbn:
+        normalized_isbn = re.sub(r"[^0-9Xx]", "", cover_metadata.isbn)
+        if normalized_isbn:
+            return f"urn:isbn:{normalized_isbn}"
+    return f"urn:uuid:{uuid4()}"
+
+
+def _build_publication_date(cover_metadata: CoverMetadata) -> str:
+    if cover_metadata.publication_year and cover_metadata.publication_year.isdigit():
+        return f"{cover_metadata.publication_year}-01-01"
+    return datetime.utcnow().date().isoformat()
+
+
+def _build_description(cover_metadata: CoverMetadata) -> str:
+    return cover_metadata.expression or "Descrição não informada"
+
+
+def default_content_opf(
+        title: str,
+        content_files: list[str],
+        cover_metadata: CoverMetadata,
+        identifier: str,
+) -> str:
     manifest_items = ["    <item id=\"index\" href=\"index.html\" media-type=\"application/xhtml+xml\" />"]
     spine_items = ["    <itemref idref=\"index\" />"]
 
@@ -643,13 +676,25 @@ def default_content_opf(title: str, content_files: list[str]) -> str:
     manifest_block = "\n".join(manifest_items)
     spine_block = "\n".join(spine_items)
 
+    creator = cover_metadata.authors_text()
+    publisher = cover_metadata.editor or "Editor não informado"
+    publication_date = _build_publication_date(cover_metadata)
+    description = _build_description(cover_metadata)
+
     return (
         "<?xml version='1.0' encoding='UTF-8'?>\n"
         "<package version=\"2.0\" xmlns=\"http://www.idpf.org/2007/opf\" unique-identifier=\"BookId\">\n"
-        "  <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n"
+        "  <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:opf=\"http://www.idpf.org/2007/opf\">\n"
         f"    <dc:title>{title}</dc:title>\n"
-        "    <dc:identifier id=\"BookId\">pnld-package</dc:identifier>\n"
-        "    <dc:language>pt-BR</dc:language>\n"
+        f"    <dc:identifier id=\"BookId\">{identifier}</dc:identifier>\n"
+        f"    <dc:language>pt-BR</dc:language>\n"
+        f"    <dc:creator>{creator}</dc:creator>\n"
+        f"    <dc:publisher>{publisher}</dc:publisher>\n"
+        f"    <dc:date>{publication_date}</dc:date>\n"
+        f"    <dc:description>{description}</dc:description>\n"
+        "    <meta property=\"schema:accessibilityFeature\">structuralNavigation</meta>\n"
+        "    <meta property=\"schema:accessibilityFeature\">tableOfContents</meta>\n"
+        "    <meta property=\"schema:accessibilityAPI\">ARIA</meta>\n"
         "  </metadata>\n"
         "  <manifest>\n"
         f"{manifest_block}\n"
