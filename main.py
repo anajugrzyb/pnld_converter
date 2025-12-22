@@ -699,8 +699,9 @@ def create_structure(base_path: Path):
     for folder in structure:
         dir_path = base_path / folder
         dir_path.mkdir(parents=True, exist_ok=True)
-        keep_file = dir_path / ".keep"
-        keep_file.write_text("", encoding="utf-8")
+        if dir_path.name != "content":
+            keep_file = dir_path / ".keep"
+            keep_file.write_text("", encoding="utf-8")
 
 
 def generate_files(
