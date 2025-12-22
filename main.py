@@ -18,6 +18,7 @@ TEMP_DIR = Path("temp")
 BASE_FOLDER_NAME = "pnld_project"
 OUTPUT_NAME = "converted_work.pnld"
 MAX_PACKAGE_SIZE_BYTES = int(1.5 * 1024 ** 3)
+OPF_VERSION = "3.0"
 
 app = FastAPI(
     title="PNLD Converter",
@@ -896,7 +897,9 @@ def default_content_opf(
         cover_metadata: CoverMetadata,
         identifier: str,
 ) -> str:
-    manifest_items = ["    <item id=\"index\" href=\"index.html\" media-type=\"application/xhtml+xml\" />"]
+    manifest_items = [
+        "    <item id=\"index\" href=\"index.html\" media-type=\"application/xhtml+xml\" properties=\"nav\" />"
+    ]
     spine_items = ["    <itemref idref=\"index\" />"]
 
     for file_name in content_files:
@@ -919,7 +922,7 @@ def default_content_opf(
 
     return (
         "<?xml version='1.0' encoding='UTF-8'?>\n"
-        "<package version=\"2.0\" xmlns=\"http://www.idpf.org/2007/opf\" unique-identifier=\"BookId\">\n"
+        f"<package version=\"{OPF_VERSION}\" xmlns=\"http://www.idpf.org/2007/opf\" unique-identifier=\"BookId\">\n"
         "  <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:opf=\"http://www.idpf.org/2007/opf\">\n"
         f"    <dc:title>{title}</dc:title>\n"
         f"    <dc:identifier id=\"BookId\">{identifier}</dc:identifier>\n"
@@ -935,7 +938,7 @@ def default_content_opf(
         "  <manifest>\n"
         f"{manifest_block}\n"
         "  </manifest>\n"
-        "  <spine toc=\"toc\">\n"
+        "  <spine>\n"
         f"{spine_block}\n"
         "  </spine>\n"
         "</package>\n"
