@@ -454,6 +454,58 @@ def generate_pre_textual_html(title: str, cover_metadata: CoverMetadata) -> str:
 def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: list[tuple[str, str]]) -> str:
     soup, html, body, doctype = _build_base_html(title)
 
+    head = soup.head or html.find("head")
+
+    description_parts = ["PNLD", cover_metadata.collection_title]
+    if cover_metadata.book_title:
+        description_parts.append(cover_metadata.book_title)
+    description_content = " - ".join(description_parts)
+
+    if cover_metadata.authors:
+        author_content = ", ".join(cover_metadata.authors)
+    elif cover_metadata.organizer:
+        author_content = cover_metadata.organizer
+    else:
+        author_content = "Equipe editorial"
+
+    charset_meta = head.find("meta", attrs={"charset": True}) or soup.new_tag(
+        "meta", charset="UTF-8"
+    )
+    title_tag = head.title or soup.new_tag("title")
+    title_tag.string = title
+
+    description_meta = head.find("meta", attrs={"name": "description"})
+    if description_meta:
+        description_meta["content"] = description_content
+    else:
+        description_meta = soup.new_tag(
+            "meta", attrs={"name": "description", "content": description_content}
+        )
+
+    author_meta = head.find("meta", attrs={"name": "author"})
+    if author_meta:
+        author_meta["content"] = author_content
+    else:
+        author_meta = soup.new_tag("meta", attrs={"name": "author", "content": author_content})
+
+    robots_meta = head.find("meta", attrs={"name": "robots"})
+    if robots_meta:
+        robots_meta["content"] = "noindex, nofollow"
+    else:
+        robots_meta = soup.new_tag(
+            "meta", attrs={"name": "robots", "content": "noindex, nofollow"}
+        )
+
+    other_head_elements = [
+        child
+        for child in list(head.children)
+        if child not in {charset_meta, title_tag, description_meta, author_meta, robots_meta}
+    ]
+
+    head.clear()
+    head.extend([charset_meta, title_tag, description_meta, author_meta, robots_meta])
+    head.extend(other_head_elements)
+
     for existing_nav in body.find_all("nav"):
         existing_nav.decompose()
 
