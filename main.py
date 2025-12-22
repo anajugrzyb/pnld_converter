@@ -584,7 +584,7 @@ def generate_files(
     all_content_files = [pre_textual_file.name] + chapter_files
 
     (base_path / "toc.ncx").write_text(
-        default_toc_ncx(title, toc_entries, identifier),
+        generate_toc_ncx(title, chapters, identifier),
         encoding="utf-8",
     )
     (base_path / "content.opf").write_text(
@@ -603,15 +603,25 @@ def create_pnld_package(base_path: Path, output_zip: Path) -> Path:
                 zf.write(path, path.relative_to(base_path))
     return output_zip
 
-def default_toc_ncx(title: str, toc_entries: list[tuple[str, str]], package_uid: str) -> str:
+def generate_toc_ncx(title: str, chapters: list[Chapter], package_uid: str) -> str:
     navpoints = []
-    for order, (entry_title, href) in enumerate(toc_entries, start=1):
+    navpoints.append(
+        "    <navPoint id=\"navpoint-1\" playOrder=\"1\">\n"
+        "      <navLabel>\n"
+        "        <text>Materiais pré-textuais</text>\n"
+        "      </navLabel>\n"
+        "      <content src=\"content/pre_textual.html\" />\n"
+        "    </navPoint>"
+    )
+
+    for chapter_number, chapter in enumerate(chapters, start=1):
+        chapter_order = chapter_number + 1
         navpoints.append(
-            f"    <navPoint id=\"navpoint-{order}\" playOrder=\"{order}\">\n"
+            f"    <navPoint id=\"navpoint-{chapter_order}\" playOrder=\"{chapter_order}\">\n"
             f"      <navLabel>\n"
-            f"        <text>{entry_title}</text>\n"
+            f"        <text>{chapter.title}</text>\n"
             f"      </navLabel>\n"
-            f"      <content src=\"{href}\" />\n"
+            f"      <content src=\"content/capitulo_{chapter_number:02}.html\" />\n"
             f"    </navPoint>"
         )
 
