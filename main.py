@@ -4,26 +4,34 @@ import re
 import shutil
 import zipfile
 import json
+import io
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional
 from uuid import uuid4
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pdfminer.high_level import extract_text
+import pytesseract
 from bs4 import BeautifulSoup
+
+# ✅ NOVO: render de PDF -> imagem sem Poppler
+import fitz  # PyMuPDF
+from PIL import Image
+
 
 TEMP_DIR = Path("temp")
 BASE_FOLDER_NAME = "pnld_project"
 OUTPUT_NAME = "converted_work.pnld"
-MAX_PACKAGE_SIZE_BYTES = int(1.5 * 1024 ** 3)
+MAX_PACKAGE_SIZE_BYTES = int(1.5 * 1024**3)
 OPF_VERSION = "3.0"
 
 app = FastAPI(
     title="PNLD Converter",
     description="API that converts PDFs to PNLD (.pnld) format",
-    version="1.2.0"
+    version="1.2.0",
 )
 
 
@@ -34,20 +42,20 @@ def home():
 
 @app.post("/convert")
 async def convert_pdf(
-        file: UploadFile = File(...),
-        collection_title: str = Form(...),
-        book_title: Optional[str] = Form(None),
-        authors: Optional[str] = Form(None),
-        author_background: Optional[str] = Form(None),
-        organizer: Optional[str] = Form(None),
-        editor: str = Form(...),
-        edition_number: Optional[str] = Form(None),
-        editor_address: Optional[str] = Form(None),
-        publication_city: Optional[str] = Form(None),
-        publication_year: Optional[str] = Form(None),
-        isbn: Optional[str] = Form(None),
-        catalog_card: Optional[str] = Form(None),
-        page_map: Optional[str] = Form(None),
+    file: UploadFile = File(...),
+    collection_title: str = Form(...),
+    book_title: Optional[str] = Form(None),
+    authors: Optional[str] = Form(None),
+    author_background: Optional[str] = Form(None),
+    organizer: Optional[str] = Form(None),
+    editor: str = Form(...),
+    edition_number: Optional[str] = Form(None),
+    editor_address: Optional[str] = Form(None),
+    publication_city: Optional[str] = Form(None),
+    publication_year: Optional[str] = Form(None),
+    isbn: Optional[str] = Form(None),
+    catalog_card: Optional[str] = Form(None),
+    page_map: Optional[str] = Form(None),
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Please upload a valid PDF file.")
@@ -71,7 +79,7 @@ async def convert_pdf(
         if not chapters:
             raise HTTPException(
                 status_code=500,
-                detail="Não foi possível segmentar o PDF em unidades lógicas."
+                detail="Não foi possível segmentar o PDF em unidades lógicas.",
             )
 
         authors_list = parse_authors(authors)
@@ -108,28 +116,102 @@ async def convert_pdf(
         if output_pnld.stat().st_size > MAX_PACKAGE_SIZE_BYTES:
             raise HTTPException(
                 status_code=400,
-                detail="O pacote PNLD excede o tamanho máximo permitido de 1,5GB."
+                detail="O pacote PNLD excede o tamanho máximo permitido de 1,5GB.",
             )
 
-        return FileResponse(
-            output_pnld,
-            filename=OUTPUT_NAME,
-            media_type="application/zip"
-        )
+        return FileResponse(output_pnld, filename=OUTPUT_NAME, media_type="application/zip")
 
     finally:
         if temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def extract_text_from_pdf(pdf_path: Path) -> str:
-    raw_text = extract_text(pdf_path)
-    normalized_lines = [
-        line.strip() for line in raw_text.splitlines()
-    ]
+# =============================================================================
+# ✅ NOVO (SEM POPPLER): PDF -> Imagens (PyMuPDF) + OCR
+# =============================================================================
+def _normalize_text(text: str) -> str:
+    normalized_lines = [line.strip() for line in text.splitlines()]
     return "\n".join(normalized_lines)
 
 
+def pdf_to_pil_images_pymupdf(pdf_path: Path, zoom: float = 3.0) -> list[Image.Image]:
+    """
+    Renderiza o PDF em imagens (PIL) usando PyMuPDF.
+    zoom=3.0 ~ qualidade boa p/ OCR. Se precisar, aumente via env OCR_ZOOM.
+    """
+    doc = fitz.open(str(pdf_path))
+    images: list[Image.Image] = []
+    mat = fitz.Matrix(zoom, zoom)
+
+    for page in doc:
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        img = Image.open(io.BytesIO(pix.tobytes("png")))
+        images.append(img)
+
+    doc.close()
+    return images
+
+
+def ocr_images(images: list[Image.Image], lang: str = "por") -> str:
+    chunks: list[str] = []
+    for img in images:
+        txt = pytesseract.image_to_string(img, lang=lang)
+        if txt:
+            chunks.append(txt)
+    return "\n".join(chunks)
+
+
+def extract_text_from_pdf(pdf_path: Path) -> str:
+    # 1) tenta extrair texto normal (PDF com camada de texto)
+    raw_text = extract_text(pdf_path)
+    normalized_text = _normalize_text(raw_text)
+    min_text_length = 50
+
+    if len(normalized_text.strip()) >= min_text_length:
+        return normalized_text
+
+    # 2) OCR fallback (sem Poppler)
+    tesseract_cmd = os.getenv("TESSERACT_CMD")
+    if tesseract_cmd:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+
+    zoom_env = os.getenv("OCR_ZOOM")
+    try:
+        zoom = float(zoom_env) if zoom_env else 3.0
+    except ValueError:
+        zoom = 3.0
+
+    try:
+        images = pdf_to_pil_images_pymupdf(pdf_path, zoom=zoom)
+    except Exception as exc:
+        raise RuntimeError(
+            "Falha ao renderizar o PDF para OCR usando PyMuPDF.\n"
+            "Instale: pip install pymupdf pillow\n"
+            "E verifique se o PDF está íntegro."
+        ) from exc
+
+    try:
+        ocr_text = ocr_images(images, lang="por")
+    except Exception as exc:
+        raise RuntimeError(
+            "Falha ao aplicar OCR com Tesseract.\n"
+            "Verifique se o Tesseract está instalado e se TESSERACT_CMD está correto."
+        ) from exc
+
+    normalized_ocr_text = _normalize_text(ocr_text)
+
+    if len(normalized_ocr_text.strip()) < min_text_length:
+        raise ValueError(
+            "OCR não retornou texto suficiente. Verifique se o PDF é legível "
+            "ou aumente OCR_ZOOM (ex.: 3.5 ou 4.0)."
+        )
+
+    return normalized_ocr_text
+
+
+# =============================================================================
+# Seu restante do código (sem mudanças de lógica)
+# =============================================================================
 @dataclass
 class Chapter:
     title: str
@@ -226,9 +308,7 @@ class CoverMetadata:
         return self.isbn or "ISBN não informado"
 
     def author_background_text(self) -> str:
-        return (
-                self.author_background or "Formação e experiência profissional não informada"
-        )
+        return self.author_background or "Formação e experiência profissional não informada"
 
     def edition_text(self) -> str:
         return self.edition_number or "Edição não informada"
@@ -252,9 +332,7 @@ def _build_base_html(title: str) -> tuple[BeautifulSoup, Any, Any, str]:
     html = soup.new_tag("html", lang="pt-br")
     head = soup.new_tag("head")
     head.append(soup.new_tag("meta", charset="UTF-8"))
-    head.append(
-        soup.new_tag("meta", attrs={"name": "robots", "content": "noindex, nofollow"})
-    )
+    head.append(soup.new_tag("meta", attrs={"name": "robots", "content": "noindex, nofollow"}))
 
     title_tag = soup.new_tag("title")
     title_tag.string = title
@@ -372,27 +450,20 @@ def generate_front_matter(soup: BeautifulSoup, cover_metadata: CoverMetadata):
     )
     folha_rosto.append(edition_info)
 
-    verso_folha_rosto = soup.new_tag(
-        "section", attrs={"class": "verso-folha-rosto", "data-objeto": "2"}
-    )
+    verso_folha_rosto = soup.new_tag("section", attrs={"class": "verso-folha-rosto", "data-objeto": "2"})
 
     catalog_card = soup.new_tag("p", attrs={"class": "ficha-catalografica"})
     catalog_card.string = cover_metadata.catalog_card_text()
     verso_folha_rosto.append(catalog_card)
 
     editor_info = soup.new_tag("p", attrs={"class": "informacoes-editor"})
-    editor_info.string = (
-        f"Editor: {cover_metadata.editor} | Endereço: {cover_metadata.editor_address_text()}"
-    )
+    editor_info.string = f"Editor: {cover_metadata.editor} | Endereço: {cover_metadata.editor_address_text()}"
     verso_folha_rosto.append(editor_info)
 
     return folha_rosto, verso_folha_rosto
 
 
-def generate_content_html(
-        chapter: Chapter,
-        title: str = "PNLD Work",
-) -> str:
+def generate_content_html(chapter: Chapter, title: str = "PNLD Work") -> str:
     soup, html, body, doctype = _build_base_html(title)
 
     main = soup.new_tag("main", attrs={"class": "conteudo", "role": "main"})
@@ -435,9 +506,7 @@ def generate_pre_textual_html(title: str, cover_metadata: CoverMetadata) -> str:
     pre_textual_section.append(section_heading)
 
     resumo = soup.new_tag("p")
-    resumo.string = (
-        "Esta seção reúne informações editoriais e de autoria fornecidas para a obra."
-    )
+    resumo.string = "Esta seção reúne informações editoriais e de autoria fornecidas para a obra."
     pre_textual_section.append(resumo)
 
     autores = soup.new_tag("p")
@@ -456,7 +525,6 @@ def generate_pre_textual_html(title: str, cover_metadata: CoverMetadata) -> str:
     pre_textual_section.append(edicao)
 
     main.append(pre_textual_section)
-
     body.append(main)
     return f"{doctype}\n{str(html)}"
 
@@ -478,9 +546,7 @@ def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: 
     else:
         author_content = "Equipe editorial"
 
-    charset_meta = head.find("meta", attrs={"charset": True}) or soup.new_tag(
-        "meta", charset="UTF-8"
-    )
+    charset_meta = head.find("meta", attrs={"charset": True}) or soup.new_tag("meta", charset="UTF-8")
     title_tag = head.title or soup.new_tag("title")
     title_tag.string = title
 
@@ -488,9 +554,7 @@ def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: 
     if description_meta:
         description_meta["content"] = description_content
     else:
-        description_meta = soup.new_tag(
-            "meta", attrs={"name": "description", "content": description_content}
-        )
+        description_meta = soup.new_tag("meta", attrs={"name": "description", "content": description_content})
 
     author_meta = head.find("meta", attrs={"name": "author"})
     if author_meta:
@@ -502,9 +566,7 @@ def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: 
     if robots_meta:
         robots_meta["content"] = "noindex, nofollow"
     else:
-        robots_meta = soup.new_tag(
-            "meta", attrs={"name": "robots", "content": "noindex, nofollow"}
-        )
+        robots_meta = soup.new_tag("meta", attrs={"name": "robots", "content": "noindex, nofollow"})
 
     other_head_elements = [
         child
@@ -533,8 +595,9 @@ def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: 
     main.append(folha_rosto)
     main.append(verso_folha_rosto)
 
-    apresentacao = soup.new_tag("section",
-                                attrs={"class": "apresentacao", "data-objeto": "2", "aria-label": "Apresentação"})
+    apresentacao = soup.new_tag(
+        "section", attrs={"class": "apresentacao", "data-objeto": "2", "aria-label": "Apresentação"}
+    )
     apresentacao_heading = soup.new_tag("h2")
     apresentacao_heading.string = "Apresentação"
     apresentacao.append(apresentacao_heading)
@@ -563,6 +626,7 @@ def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: 
 
         toc_list.append(li)
     nav.append(toc_list)
+
     body.append(nav)
     return f"{doctype}\n{str(html)}"
 
@@ -617,10 +681,7 @@ def normalize_page_info(raw_page_info: Any) -> tuple[str, bool, Optional[int]]:
     except (TypeError, ValueError):
         numeric_page = None
 
-    display_number = (
-        to_roman(numeric_page) if is_manual_professor and numeric_page is not None else str(page_number_value)
-    )
-
+    display_number = to_roman(numeric_page) if is_manual_professor and numeric_page is not None else str(page_number_value)
     return display_number, is_manual_professor, numeric_page
 
 
@@ -687,8 +748,7 @@ def inject_page_numbers(html: str, page_map: dict[str, Any]) -> str:
         marker_parent = marker_node.parent
         if marker_parent and marker_parent.parent:
             logical_container = next(
-                (ancestor for ancestor in marker_node.parents if
-                 getattr(ancestor, "name", "") in {"section", "article"}),
+                (ancestor for ancestor in marker_node.parents if getattr(ancestor, "name", "") in {"section", "article"}),
                 None,
             )
 
@@ -755,11 +815,11 @@ def create_structure(base_path: Path):
 
 
 def generate_files(
-        base_path: Path,
-        chapters: list[Chapter],
-        title: str,
-        cover_metadata: Optional[CoverMetadata],
-        page_map: Optional[dict[str, dict[str, Any]]] = None,
+    base_path: Path,
+    chapters: list[Chapter],
+    title: str,
+    cover_metadata: Optional[CoverMetadata],
+    page_map: Optional[dict[str, dict[str, Any]]] = None,
 ):
     effective_page_map = page_map or {}
 
@@ -772,22 +832,17 @@ def generate_files(
     pre_textual_file = content_dir / "pre_textual.html"
     pre_textual_html = generate_pre_textual_html(title, cover_metadata or CoverMetadata(collection_title=title))
     pre_textual_page_map = find_page_map_for(pre_textual_file.name)
-    pre_textual_file.write_text(
-        inject_page_numbers(pre_textual_html, pre_textual_page_map),
-        encoding="utf-8",
-    )
+    pre_textual_file.write_text(inject_page_numbers(pre_textual_html, pre_textual_page_map), encoding="utf-8")
     pre_textual_page, pre_textual_anchor = extract_primary_page_reference(pre_textual_page_map)
     pre_textual_href = f"content/{pre_textual_file.name}"
     if pre_textual_anchor:
         pre_textual_href = f"{pre_textual_href}#{pre_textual_anchor}"
     toc_entries.append(("Materiais pré-textuais", pre_textual_href, pre_textual_page or "—"))
+
     chapter_files: list[str] = []
 
     for index, chapter in enumerate(chapters, start=1):
-        html_content = generate_content_html(
-            chapter,
-            title=title,
-        )
+        html_content = generate_content_html(chapter, title=title)
 
         file_name = f"capitulo_{index:02}.html"
         content_file = content_dir / file_name
@@ -815,10 +870,7 @@ def generate_files(
 
     all_content_files = [pre_textual_file.name] + chapter_files
 
-    (base_path / "toc.ncx").write_text(
-        generate_toc_ncx(title, chapters, identifier),
-        encoding="utf-8",
-    )
+    (base_path / "toc.ncx").write_text(generate_toc_ncx(title, chapters, identifier), encoding="utf-8")
     (base_path / "content.opf").write_text(
         default_content_opf(title, all_content_files, cover_metadata, identifier),
         encoding="utf-8",
@@ -897,12 +949,7 @@ def _build_description(cover_metadata: CoverMetadata) -> str:
     return cover_metadata.expression or "Descrição não informada"
 
 
-def default_content_opf(
-        title: str,
-        content_files: list[str],
-        cover_metadata: CoverMetadata,
-        identifier: str,
-) -> str:
+def default_content_opf(title: str, content_files: list[str], cover_metadata: CoverMetadata, identifier: str) -> str:
     manifest_items = [
         "    <item id=\"index\" href=\"index.html\" media-type=\"application/xhtml+xml\" properties=\"nav\" />"
     ]
@@ -910,9 +957,7 @@ def default_content_opf(
 
     for file_name in content_files:
         item_id = Path(file_name).stem
-        manifest_items.append(
-            f"    <item id=\"{item_id}\" href=\"content/{file_name}\" media-type=\"application/xhtml+xml\" />"
-        )
+        manifest_items.append(f"    <item id=\"{item_id}\" href=\"content/{file_name}\" media-type=\"application/xhtml+xml\" />")
         spine_items.append(f"    <itemref idref=\"{item_id}\" />")
 
     manifest_items.append("    <item id=\"toc\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\" />")
@@ -952,9 +997,21 @@ def default_content_opf(
 
 
 def write_placeholder_cover(cover_path: Path):
-    placeholder_bytes = base64.b64decode(
-        """
-        /9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBAPEBAVDw8PDw8PDw8PFREPFQ8QFREWFhURFRUYHSggGBolGxUVITEhJSkrLi4uFx8zODMtNygtLisBCgoKDg0OGxAQGy0fHR0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAKgBLAMBIgACEQEDEQH/xAAbAAACAwEBAQAAAAAAAAAAAAADBAACBQEGB//EADwQAAIBAwIEAwUFBAEEAwAAAAECAwAEEQUSITFBBtQVNcDxBhUiMpHwYnLRFjNCI1JicrLxM0Ny/8QAGgEAAgMBAQAAAAAAAAAAAAAAAAQBAgMFBv/EACMRAAICAgICAgMBAAAAAAAAAAABAhEDIRIxBBNBYRRRYXH/2gAMAwEAAhEDEQA/APqREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREH//Z
-        """
-    )
+    b64_data = """
+/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBAPEBAVDw8PDw8PDw8PFREPFQ8QFREWFhURFRUYHSggGBolGxUVITEhJSkrLi4uFx8zODMtNygtLisBCgoKDg0OGxAQGy0fHR0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAKgBLAMBIgACEQEDEQH/xAAbAAACAwEBAQAAAAAAAAAAAAADBAACBQEGB//EADwQAAIBAwIEAwUFBAEEAwAAAAECAwAEEQUSITFBBtQVNcDxBhUiMpHwYnLRFjNCI1JicrLxM0Ny/8QAGgEAAgMBAQAAAAAAAAAAAAAAAAQBAgMFBv/EACMRAAICAgICAgMBAAAAAAAAAAABAhEDIRIxBBNBYRRRYXH/2gAMAwEAAhEDEQA/APqREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREH//Z
+""".strip()
+
+    # remove qualquer whitespace (linhas, tabs, espaços)
+    b64_clean = re.sub(r"\s+", "", b64_data)
+
+    # garante padding (base64 precisa ser múltiplo de 4)
+    missing = (-len(b64_clean)) % 4
+    if missing:
+        b64_clean += "=" * missing
+
+    try:
+        placeholder_bytes = base64.b64decode(b64_clean, validate=False)
+    except Exception as exc:
+        raise RuntimeError("Cover placeholder base64 inválido (corrija a string base64).") from exc
+
     cover_path.write_bytes(placeholder_bytes)
