@@ -782,11 +782,9 @@ def generate_files(
         file_name = f"capitulo_{index:02}.html"
         content_file = content_dir / file_name
         chapter_page_map = find_page_map_for(file_name)
-        content_file.write_text(
-            inject_page_numbers(html_content, find_page_map_for(file_name)),
-            inject_page_numbers(html_content, chapter_page_map),
-            encoding="utf-8",
-        )
+        processed = inject_page_numbers(html_content, chapter_page_map)
+        content_file.write_text(processed, encoding="utf-8")
+
         chapter_files.append(file_name)
         chapter_page, chapter_anchor = extract_primary_page_reference(chapter_page_map)
         chapter_href = f"content/{file_name}"
