@@ -52,12 +52,13 @@ async def convert_pdf(
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Please upload a valid PDF file.")
 
-    temp_dir = TEMP_DIR
+    request_id = uuid4().hex
+    temp_dir = TEMP_DIR / request_id
     base_dir = temp_dir / BASE_FOLDER_NAME
-    output_pnld = temp_dir / OUTPUT_NAME
+    output_dir = TEMP_DIR / "outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_pnld = output_dir / f"{request_id}_{OUTPUT_NAME}"
 
-    if temp_dir.exists():
-        shutil.rmtree(temp_dir)
     base_dir.mkdir(parents=True, exist_ok=True)
 
     pdf_path = base_dir / file.filename
@@ -66,56 +67,59 @@ async def convert_pdf(
 
     try:
         text = extract_text_from_pdf(pdf_path)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        chapters = split_into_logical_units(text)
+        if not chapters:
+            raise HTTPException(
+                status_code=500,
+                detail="Não foi possível segmentar o PDF em unidades lógicas."
+            )
 
-    chapters = split_into_logical_units(text)
-    if not chapters:
-        raise HTTPException(status_code=500, detail="Não foi possível segmentar o PDF em unidades lógicas.")
+        authors_list = parse_authors(authors)
 
-    authors_list = parse_authors(authors)
-
-    cover_metadata = CoverMetadata(
-        collection_title=collection_title.strip() or file.filename,
-        book_title=(book_title or "").strip() or None,
-        authors=authors_list,
-        author_background=(author_background or "").strip() or None,
-        organizer=(organizer or "").strip() or None,
-        editor=editor.strip() or "Editor não informado",
-        edition_number=(edition_number or "").strip() or None,
-        editor_address=(editor_address or "").strip() or None,
-        publication_city=(publication_city or "").strip() or None,
-        publication_year=(publication_year or "").strip() or None,
-        isbn=(isbn or "").strip() or None,
-        catalog_card=(catalog_card or "").strip() or None,
-    )
-
-    html_title = cover_metadata.book_title or cover_metadata.collection_title
-
-
-    create_structure(base_dir)
-    parsed_page_map = parse_page_map(page_map)
-
-    generate_files(
-        base_dir,
-        chapters,
-        html_title,
-        cover_metadata,
-        page_map=parsed_page_map,
-    )
-    create_pnld_package(base_dir, output_pnld)
-
-    if output_pnld.stat().st_size > MAX_PACKAGE_SIZE_BYTES:
-        raise HTTPException(
-            status_code=400,
-            detail="O pacote PNLD excede o tamanho máximo permitido de 1,5GB."
+        cover_metadata = CoverMetadata(
+            collection_title=collection_title.strip() or file.filename,
+            book_title=(book_title or "").strip() or None,
+            authors=authors_list,
+            author_background=(author_background or "").strip() or None,
+            organizer=(organizer or "").strip() or None,
+            editor=editor.strip() or "Editor não informado",
+            edition_number=(edition_number or "").strip() or None,
+            editor_address=(editor_address or "").strip() or None,
+            publication_city=(publication_city or "").strip() or None,
+            publication_year=(publication_year or "").strip() or None,
+            isbn=(isbn or "").strip() or None,
+            catalog_card=(catalog_card or "").strip() or None,
         )
 
-    return FileResponse(
-        output_pnld,
-        filename=OUTPUT_NAME,
-        media_type="application/zip"
-    )
+        html_title = cover_metadata.book_title or cover_metadata.collection_title
+
+        create_structure(base_dir)
+        parsed_page_map = parse_page_map(page_map)
+
+        generate_files(
+            base_dir,
+            chapters,
+            html_title,
+            cover_metadata,
+            page_map=parsed_page_map,
+        )
+        create_pnld_package(base_dir, output_pnld)
+
+        if output_pnld.stat().st_size > MAX_PACKAGE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail="O pacote PNLD excede o tamanho máximo permitido de 1,5GB."
+            )
+
+        return FileResponse(
+            output_pnld,
+            filename=OUTPUT_NAME,
+            media_type="application/zip"
+        )
+
+    finally:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def extract_text_from_pdf(pdf_path: Path) -> str:
@@ -137,6 +141,7 @@ def parse_authors(authors: Optional[str]) -> list[str]:
         return []
     parsed = [name.strip() for name in authors.replace("\n", ";").split(";")]
     return [name for name in parsed if name]
+
 
 def split_into_logical_units(text: str) -> list[Chapter]:
     def is_heading(line: str) -> bool:
@@ -239,6 +244,7 @@ class CoverMetadata:
 
     def catalog_card_text(self) -> str:
         return self.catalog_card or "Ficha catalográfica não informada"
+
 
 def _build_base_html(title: str) -> tuple[BeautifulSoup, Any, Any, str]:
     soup = BeautifulSoup("", "html.parser")
@@ -382,6 +388,7 @@ def generate_front_matter(soup: BeautifulSoup, cover_metadata: CoverMetadata):
 
     return folha_rosto, verso_folha_rosto
 
+
 def generate_content_html(
         chapter: Chapter,
         title: str = "PNLD Work",
@@ -411,6 +418,7 @@ def generate_content_html(
 
     return f"{doctype}\n{str(html)}"
 
+
 def generate_pre_textual_html(title: str, cover_metadata: CoverMetadata) -> str:
     soup, html, body, doctype = _build_base_html(title)
     main = soup.new_tag("main", attrs={"class": "conteudo", "role": "main"})
@@ -429,7 +437,7 @@ def generate_pre_textual_html(title: str, cover_metadata: CoverMetadata) -> str:
     resumo = soup.new_tag("p")
     resumo.string = (
         "Esta seção reúne informações editoriais e de autoria fornecidas para a obra."
-        )
+    )
     pre_textual_section.append(resumo)
 
     autores = soup.new_tag("p")
@@ -451,6 +459,7 @@ def generate_pre_textual_html(title: str, cover_metadata: CoverMetadata) -> str:
 
     body.append(main)
     return f"{doctype}\n{str(html)}"
+
 
 def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: list[tuple[str, str, str]]) -> str:
     soup, html, body, doctype = _build_base_html(title)
@@ -524,7 +533,8 @@ def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: 
     main.append(folha_rosto)
     main.append(verso_folha_rosto)
 
-    apresentacao = soup.new_tag("section", attrs={"class": "apresentacao", "data-objeto": "2", "aria-label": "Apresentação"})
+    apresentacao = soup.new_tag("section",
+                                attrs={"class": "apresentacao", "data-objeto": "2", "aria-label": "Apresentação"})
     apresentacao_heading = soup.new_tag("h2")
     apresentacao_heading.string = "Apresentação"
     apresentacao.append(apresentacao_heading)
@@ -555,6 +565,7 @@ def generate_index_html(title: str, cover_metadata: CoverMetadata, toc_entries: 
     nav.append(toc_list)
     body.append(nav)
     return f"{doctype}\n{str(html)}"
+
 
 def to_roman(number: int) -> str:
     mapping = [
@@ -633,7 +644,6 @@ def extract_primary_page_reference(page_map_for_file: dict[str, Any]) -> tuple[O
             best_display, best_anchor, best_numeric = display_number, anchor_id, numeric_page
 
     return best_display, best_anchor
-
 
 
 def inject_page_numbers(html: str, page_map: dict[str, Any]) -> str:
@@ -825,6 +835,7 @@ def create_pnld_package(base_path: Path, output_zip: Path) -> Path:
                 zf.write(path, path.relative_to(base_path))
     return output_zip
 
+
 def generate_toc_ncx(title: str, chapters: list[Chapter], package_uid: str) -> str:
     navpoints = []
     navpoints.append(
@@ -938,7 +949,6 @@ def default_content_opf(
         "  </spine>\n"
         "</package>\n"
     )
-
 
 
 def write_placeholder_cover(cover_path: Path):
