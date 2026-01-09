@@ -16,9 +16,7 @@ from fastapi.responses import FileResponse
 from pdfminer.high_level import extract_text
 import pytesseract
 from bs4 import BeautifulSoup
-
-# ✅ NOVO: render de PDF -> imagem sem Poppler
-import fitz  # PyMuPDF
+import fitz
 from PIL import Image
 
 
@@ -126,19 +124,12 @@ async def convert_pdf(
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-# =============================================================================
-# ✅ NOVO (SEM POPPLER): PDF -> Imagens (PyMuPDF) + OCR
-# =============================================================================
 def _normalize_text(text: str) -> str:
     normalized_lines = [line.strip() for line in text.splitlines()]
     return "\n".join(normalized_lines)
 
 
 def pdf_to_pil_images_pymupdf(pdf_path: Path, zoom: float = 3.0) -> list[Image.Image]:
-    """
-    Renderiza o PDF em imagens (PIL) usando PyMuPDF.
-    zoom=3.0 ~ qualidade boa p/ OCR. Se precisar, aumente via env OCR_ZOOM.
-    """
     doc = fitz.open(str(pdf_path))
     images: list[Image.Image] = []
     mat = fitz.Matrix(zoom, zoom)
@@ -162,7 +153,6 @@ def ocr_images(images: list[Image.Image], lang: str = "por") -> str:
 
 
 def extract_text_from_pdf(pdf_path: Path) -> str:
-    # 1) tenta extrair texto normal (PDF com camada de texto)
     raw_text = extract_text(pdf_path)
     normalized_text = _normalize_text(raw_text)
     min_text_length = 50
@@ -170,7 +160,6 @@ def extract_text_from_pdf(pdf_path: Path) -> str:
     if len(normalized_text.strip()) >= min_text_length:
         return normalized_text
 
-    # 2) OCR fallback (sem Poppler)
     tesseract_cmd = os.getenv("TESSERACT_CMD")
     if tesseract_cmd:
         pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
@@ -208,10 +197,6 @@ def extract_text_from_pdf(pdf_path: Path) -> str:
 
     return normalized_ocr_text
 
-
-# =============================================================================
-# Seu restante do código (sem mudanças de lógica)
-# =============================================================================
 @dataclass
 class Chapter:
     title: str
@@ -1001,10 +986,8 @@ def write_placeholder_cover(cover_path: Path):
 /9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBAPEBAVDw8PDw8PDw8PFREPFQ8QFREWFhURFRUYHSggGBolGxUVITEhJSkrLi4uFx8zODMtNygtLisBCgoKDg0OGxAQGy0fHR0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLf/AABEIAKgBLAMBIgACEQEDEQH/xAAbAAACAwEBAQAAAAAAAAAAAAADBAACBQEGB//EADwQAAIBAwIEAwUFBAEEAwAAAAECAwAEEQUSITFBBtQVNcDxBhUiMpHwYnLRFjNCI1JicrLxM0Ny/8QAGgEAAgMBAQAAAAAAAAAAAAAAAAQBAgMFBv/EACMRAAICAgICAgMBAAAAAAAAAAABAhEDIRIxBBNBYRRRYXH/2gAMAwEAAhEDEQA/APqREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREBERAREQEREH//Z
 """.strip()
 
-    # remove qualquer whitespace (linhas, tabs, espaços)
     b64_clean = re.sub(r"\s+", "", b64_data)
 
-    # garante padding (base64 precisa ser múltiplo de 4)
     missing = (-len(b64_clean)) % 4
     if missing:
         b64_clean += "=" * missing

@@ -1,29 +1,23 @@
 # PNLD Converter API
-API desenvolvida com FastAPI para converter arquivos PDF em pacotes no formato .pnld.
+API desenvolvida com FastAPI para converter arquivos PDF em pacotes no formato `.pnld`.
+
+## Visão geral
+Este serviço recebe PDFs, extrai o conteúdo e empacota tudo em um arquivo `.pnld` seguindo a estrutura exigida.
 
 ## Funcionalidades
-- Upload de arquivos PDF
--  Extração de texto via pdfminer
--  Geração automática da estrutura de pastas PNLD
--  Criação de um index.html com o conteúdo extraído
--  Empacotamento final em um arquivo .pnld (ZIP)
--  Testes
+- Upload de arquivos PDF.
+- Extração de texto via `pdfminer.six`.
+- Geração automática da estrutura de pastas PNLD.
+- Criação de um `index.html` com o conteúdo extraído.
+- Empacotamento final em um arquivo `.pnld` (ZIP).
+- Cobertura de testes com `pytest`.
 
 ## Tecnologias utilizadas
-[FastAPI](https://fastapi.tiangolo.com/)
- — Framework principal da API
- 
-[pdfminer.six](https://github.com/pdfminer/pdfminer.six)
- — Extração de texto de PDFs
- 
- [BeautifulSoup4](https://www.crummy.com/software/BeautifulSoup/)
- — Geração de HTML
- 
- [pytest](https://docs.pytest.org/en/stable/)
- — Testes automatizados
- 
- [Uvicorn](https://uvicorn.dev/)
- — Servidor ASGI para rodar a aplicação
+[FastAPI](https://fastapi.tiangolo.com/) — framework principal da API.
+- [pdfminer.six](https://github.com/pdfminer/pdfminer.six) — extração de texto de PDFs.
+- [BeautifulSoup4](https://www.crummy.com/software/BeautifulSoup/) — geração de HTML.
+- [pytest](https://docs.pytest.org/en/stable/) — testes automatizados.
+- [Uvicorn](https://uvicorn.dev/) — servidor ASGI para rodar a aplicação.
 
 ## Instalação e execução
 1. Clone o repositório
